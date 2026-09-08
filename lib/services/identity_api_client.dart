@@ -58,7 +58,26 @@ class IdentityApiClient {
   Future<Map<String, dynamic>> _decode(http.Response response) async {
     Map<String, dynamic>? body;
     if (response.body.isNotEmpty) {
-      body = jsonDecode(response.body) as Map<String, dynamic>;
+      try {
+        final decoded = jsonDecode(response.body);
+        if (decoded is Map<String, dynamic>) {
+          body = decoded;
+        }
+      } catch (_) {
+        if (response.statusCode >= 500) {
+          throw ApiException(
+            'Internal server error (HTTP ${response.statusCode}). '
+            'The API may need redeploy or database migration 009.',
+            statusCode: response.statusCode,
+            code: 'SERVER_ERROR',
+          );
+        }
+        throw ApiException(
+          'Unexpected response from API (HTTP ${response.statusCode})',
+          statusCode: response.statusCode,
+          code: 'INVALID_RESPONSE',
+        );
+      }
     }
     if (response.statusCode >= 400) {
       final err = body?['error'] as Map<String, dynamic>?;

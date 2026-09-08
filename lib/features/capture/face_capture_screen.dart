@@ -119,48 +119,53 @@ class _FaceCaptureScreenState extends State<FaceCaptureScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final bottomInset = MediaQuery.paddingOf(context).bottom;
+
     return Scaffold(
       appBar: AppBar(title: Text(widget.title)),
-      body: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          const Padding(
-            padding: EdgeInsets.fromLTRB(16, 12, 16, 0),
-            child: LiveApiBanner(compact: true),
-          ),
-          Padding(
-            padding: const EdgeInsets.all(16),
-            child: Text(widget.subtitle, style: Theme.of(context).textTheme.bodyMedium),
-          ),
-          if (_qualityHint != null)
+      body: SafeArea(
+        top: false,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            const Padding(
+              padding: EdgeInsets.fromLTRB(16, 12, 16, 0),
+              child: LiveApiBanner(compact: true),
+            ),
             Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              child: Material(
-                color: AppTheme.error.withValues(alpha: 0.1),
-                borderRadius: BorderRadius.circular(10),
-                child: Padding(
-                  padding: const EdgeInsets.all(12),
-                  child: Text(_qualityHint!, style: const TextStyle(color: AppTheme.error)),
+              padding: const EdgeInsets.all(16),
+              child: Text(widget.subtitle, style: Theme.of(context).textTheme.bodyMedium),
+            ),
+            if (_qualityHint != null)
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: Material(
+                  color: AppTheme.error.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(10),
+                  child: Padding(
+                    padding: const EdgeInsets.all(12),
+                    child: Text(_qualityHint!, style: const TextStyle(color: AppTheme.error)),
+                  ),
                 ),
               ),
+            const Padding(
+              padding: EdgeInsets.fromLTRB(16, 8, 16, 0),
+              child: Text(
+                'Tips: one face only · open eyes · no mask · even lighting · specs OK if eyes visible',
+                style: TextStyle(fontSize: 12),
+              ),
             ),
-          const Padding(
-            padding: EdgeInsets.fromLTRB(16, 8, 16, 0),
-            child: Text(
-              'Tips: one face only · open eyes · no mask · even lighting · specs OK if eyes visible',
-              style: TextStyle(fontSize: 12),
+            Expanded(child: _buildPreview()),
+            Padding(
+              padding: EdgeInsets.fromLTRB(20, 12, 20, 12 + bottomInset),
+              child: AppButton(
+                label: _capturing ? 'Checking…' : 'Capture & send to API',
+                icon: Icons.camera,
+                onPressed: _capturing || _controller == null ? null : _capture,
+              ),
             ),
-          ),
-          Expanded(child: _buildPreview()),
-          Padding(
-            padding: const EdgeInsets.all(20),
-            child: AppButton(
-              label: _capturing ? 'Checking…' : 'Capture & send to API',
-              icon: Icons.camera,
-              onPressed: _capturing || _controller == null ? null : _capture,
-            ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }

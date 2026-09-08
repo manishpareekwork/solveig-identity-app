@@ -385,7 +385,8 @@ class AppState extends ChangeNotifier {
     } on ApiException catch (e) {
       error = e.message;
     } catch (e) {
-      error = e.toString();
+      final text = e.toString();
+      error = text.startsWith('FormatException') ? 'Unexpected API response — server may be down or need redeploy.' : text;
     } finally {
       loading = false;
       notifyListeners();

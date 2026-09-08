@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
-# Prefer JDK 17–23; Android Studio's Java 25 breaks Kotlin ("25.0.2" error).
+# Prefer JDK 21 for Android builds; JDK 23 can trigger javac bugs with CameraX.
 
 configure_java_home() {
   for candidate in \
-    "/Library/Java/JavaVirtualMachines/jdk-23.jdk/Contents/Home" \
     "/Library/Java/JavaVirtualMachines/jdk-21.jdk/Contents/Home" \
+    "/opt/homebrew/opt/openjdk@21/libexec/openjdk.jdk/Contents/Home" \
+    "/Library/Java/JavaVirtualMachines/jdk-23.jdk/Contents/Home" \
     "/Library/Java/JavaVirtualMachines/jdk-17.jdk/Contents/Home"; do
     if [[ -d "$candidate" ]]; then
       export JAVA_HOME="$candidate"

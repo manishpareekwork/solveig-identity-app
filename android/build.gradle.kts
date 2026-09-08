@@ -27,6 +27,18 @@ subprojects {
     val newSubprojectBuildDir: Directory = newBuildDir.dir(project.name)
     project.layout.buildDirectory.value(newSubprojectBuildDir)
 }
+
+// camera_android_camerax / CameraX: concurrent-futures is runtime-only in camera-core POM;
+// Gradle 8.14+ and JDK 23 no longer promote it to the compile classpath.
+subprojects {
+    pluginManager.withPlugin("com.android.library") {
+        dependencies.add("implementation", "androidx.concurrent:concurrent-futures:1.2.0")
+    }
+    pluginManager.withPlugin("com.android.application") {
+        dependencies.add("implementation", "androidx.concurrent:concurrent-futures:1.2.0")
+    }
+}
+
 subprojects {
     project.evaluationDependsOn(":app")
 }
