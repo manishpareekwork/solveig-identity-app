@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 
 import '../config/defaults.dart';
 import '../config/secrets_loader.dart';
+import '../services/face_capture_quality.dart';
 import '../utils/jwt_utils.dart';
 import '../services/auth_storage.dart';
 import '../services/identity_api_client.dart';
@@ -264,8 +265,9 @@ class AppState extends ChangeNotifier {
   }
 
   Future<void> enrollWithImageBytes(List<int> image) async {
+    final normalized = await normalizeCaptureBytes(Uint8List.fromList(image));
     await _run(() async {
-      final b64 = base64Encode(image);
+      final b64 = base64Encode(normalized);
       final body = await api.enrollFace(identityId: identityId!, imageBase64: b64);
       enrollmentId = body['id'] as String;
       step = FlowStep.showQr;
@@ -276,8 +278,9 @@ class AppState extends ChangeNotifier {
   }
 
   Future<void> verifyWithImageBytes(List<int> image) async {
+    final normalized = await normalizeCaptureBytes(Uint8List.fromList(image));
     await _run(() async {
-      await _runVerificationPipeline(base64Encode(image));
+      await _runVerificationPipeline(base64Encode(normalized));
     });
   }
 

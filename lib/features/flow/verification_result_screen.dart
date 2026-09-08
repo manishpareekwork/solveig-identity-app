@@ -58,17 +58,35 @@ class VerificationResultScreen extends StatelessWidget {
               liveness: args.livenessConfidence,
             ),
           ],
+          if (passed && (args.faceCaptureId != null || args.matchedEnrollmentId != null)) ...[
+            const SizedBox(height: 16),
+            _ConfirmationCard(args: args),
+          ],
           const SizedBox(height: 20),
           Text('Check outcomes', style: Theme.of(context).textTheme.titleLarge),
           const SizedBox(height: 8),
           ...args.checks.map((c) => _CheckCard(check: c)),
           if (args.identityId != null) ...[
             const SizedBox(height: 16),
+            Text('Reference IDs', style: Theme.of(context).textTheme.titleMedium),
+            const SizedBox(height: 8),
             _InfoRow(label: 'Identity', value: args.identityId!),
           ],
           if (args.sessionId != null) ...[
             const SizedBox(height: 8),
             _InfoRow(label: 'Session', value: args.sessionId!),
+          ],
+          if (args.faceCaptureId != null) ...[
+            const SizedBox(height: 8),
+            _InfoRow(label: 'Face capture', value: args.faceCaptureId!),
+          ],
+          if (args.matchedEnrollmentId != null) ...[
+            const SizedBox(height: 8),
+            _InfoRow(label: 'Matched enrollment', value: args.matchedEnrollmentId!),
+          ],
+          if (args.verifiedAt != null) ...[
+            const SizedBox(height: 8),
+            _InfoRow(label: 'Verified at', value: args.verifiedAt!),
           ],
           const SizedBox(height: 28),
           AppButton(
@@ -98,7 +116,6 @@ class _CheckCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final type = check['check_type'] as String? ?? 'check';
     final status = check['status'] as String? ?? 'unknown';
-    final code = check['result_code'] as String? ?? '-';
     final confidence = checkConfidence(check);
     final ok = status == 'passed';
     final color = ok ? AppTheme.success : (status == 'failed' ? AppTheme.error : AppTheme.warning);
@@ -109,9 +126,7 @@ class _CheckCard extends StatelessWidget {
         leading: Icon(ok ? Icons.check_circle : Icons.cancel, color: color),
         title: Text(_label(type)),
         subtitle: Text(
-          confidence != null
-              ? '$status · $code · confidence ${formatConfidencePercent(confidence)}'
-              : '$status · $code',
+          _subtitle(type, check),
         ),
         trailing: confidence != null
             ? Text(
@@ -129,6 +144,99 @@ class _CheckCard extends StatelessWidget {
       'liveness' => 'Liveness',
       _ => type,
     };
+  }
+
+  static String _subtitle(String type, Map<String, dynamic> check) {
+    final status = check['status'] as String? ?? 'unknown';
+    final code = check['result_code'] as String? ?? '-';
+    final confidence = checkConfidence(check);
+    final captureId = check['capture_id'] as String?;
+    final parts = <String>[status, code];
+    if (confidence != null) {
+      parts.add('confidence ${formatConfidencePercent(confidence)}');
+    }
+    if (captureId != null) {
+      parts.add('capture $captureId');
+    }
+    return parts.join(' · ');
+  }
+}
+
+class _ConfirmationCard extends StatelessWidget {
+  const _ConfirmationCard({required this.args});
+
+  final VerificationResultArgs args;
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      color: AppTheme.success.withValues(alpha: 0.08),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(Icons.verified, color: AppTheme.success),
+                const SizedBox(width: 8),
+                Text('Identity confirmed', style: Theme.of(context).textTheme.titleMedium),
+              ],
+            ),
+            const SizedBox(height: 12),
+            if (args.faceCaptureId != null)
+              _ConfirmationRow(
+                label: 'Face capture ID',
+                value: args.faceCaptureId!,
+                hint: 'Logged in API — use for audit / admin lookup',
+              ),
+            if (args.matchedEnrollmentId != null) ...[
+              const SizedBox(height: 10),
+              _ConfirmationRow(
+                label: 'Matched enrollment',
+                value: args.matchedEnrollmentId!,
+                hint: 'Template used for 1:1 match',
+              ),
+            ],
+            if (args.identityId != null) ...[
+              const SizedBox(height: 10),
+              _ConfirmationRow(label: 'Identity', value: args.identityId!),
+            ],
+            if (args.sessionId != null) ...[
+              const SizedBox(height: 10),
+              _ConfirmationRow(label: 'Session', value: args.sessionId!),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ConfirmationRow extends StatelessWidget {
+  const _ConfirmationRow({required this.label, required this.value, this.hint});
+
+  final String label;
+  final String value;
+  final String? hint;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(label, style: Theme.of(context).textTheme.labelMedium),
+        const SizedBox(height: 4),
+        SelectableText(
+          value,
+          style: const TextStyle(fontFamily: 'monospace', fontWeight: FontWeight.w600),
+        ),
+        if (hint != null) ...[
+          const SizedBox(height: 2),
+          Text(hint!, style: Theme.of(context).textTheme.bodySmall),
+        ],
+      ],
+    );
   }
 }
 
@@ -216,6 +324,12 @@ VerificationResultArgs resultArgsFromSession(Map<String, dynamic> session) {
     }
   }
 
+  final faceCheck = findCheck(checks, 'face_verification');
+  final faceCaptureId = session['face_capture_id'] as String? ?? faceCheck?['capture_id'] as String?;
+  final matchedEnrollmentId =
+      session['matched_enrollment_id'] as String? ?? faceCheck?['enrollment_id'] as String?;
+  final verifiedAt = session['verified_at'] as String?;
+
   return VerificationResultArgs(
     passed: passed,
     sessionStatus: status,
@@ -223,7 +337,10 @@ VerificationResultArgs resultArgsFromSession(Map<String, dynamic> session) {
     identityId: session['identity_id'] as String?,
     sessionId: session['id'] as String?,
     message: message,
-    faceMatchConfidence: checkConfidence(findCheck(checks, 'face_verification') ?? {}),
+    faceMatchConfidence: checkConfidence(faceCheck ?? {}),
     livenessConfidence: checkConfidence(findCheck(checks, 'liveness') ?? {}),
+    faceCaptureId: faceCaptureId,
+    matchedEnrollmentId: matchedEnrollmentId,
+    verifiedAt: verifiedAt,
   );
 }

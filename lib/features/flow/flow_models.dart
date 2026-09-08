@@ -8,6 +8,10 @@ class VerificationResultArgs {
     this.message,
     this.faceMatchConfidence,
     this.livenessConfidence,
+    this.faceCaptureId,
+    this.matchedEnrollmentId,
+    this.enrollmentCaptureId,
+    this.verifiedAt,
   });
 
   final bool passed;
@@ -18,4 +22,8 @@ class VerificationResultArgs {
   final String? message;
   final double? faceMatchConfidence;
   final double? livenessConfidence;
+  final String? faceCaptureId;
+  final String? matchedEnrollmentId;
+  final String? enrollmentCaptureId;
+  final String? verifiedAt;
 }

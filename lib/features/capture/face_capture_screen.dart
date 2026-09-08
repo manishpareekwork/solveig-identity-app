@@ -6,6 +6,7 @@ import 'package:go_router/go_router.dart';
 import 'package:permission_handler/permission_handler.dart';
 
 import '../../core/theme/app_theme.dart';
+import '../../services/face_capture_quality.dart';
 import '../../widgets/app_button.dart';
 import '../../widgets/live_api_banner.dart';
 
@@ -25,8 +26,10 @@ class FaceCaptureScreen extends StatefulWidget {
 
 class _FaceCaptureScreenState extends State<FaceCaptureScreen> {
   CameraController? _controller;
+  final _quality = FaceCaptureQualityService();
   bool _initializing = true;
   String? _error;
+  String? _qualityHint;
   bool _capturing = false;
 
   @override
@@ -77,6 +80,7 @@ class _FaceCaptureScreenState extends State<FaceCaptureScreen> {
   @override
   void dispose() {
     _controller?.dispose();
+    _quality.dispose();
     super.dispose();
   }
 
@@ -84,17 +88,29 @@ class _FaceCaptureScreenState extends State<FaceCaptureScreen> {
     final controller = _controller;
     if (controller == null || !controller.value.isInitialized || _capturing) return;
 
-    setState(() => _capturing = true);
+    setState(() {
+      _capturing = true;
+      _qualityHint = null;
+    });
     try {
       final file = await controller.takePicture();
-      final bytes = await file.readAsBytes();
+      var bytes = Uint8List.fromList(await file.readAsBytes());
+      bytes = await normalizeCaptureBytes(bytes);
+
+      final issue = await _quality.validateBytes(bytes);
+      if (issue != null) {
+        if (mounted) {
+          setState(() => _qualityHint = '${issue.title}: ${issue.message}');
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(issue.message)));
+        }
+        return;
+      }
+
       if (!mounted) return;
-      context.pop(Uint8List.fromList(bytes));
+      context.pop(bytes);
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Capture failed: $e')),
-        );
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Capture failed: $e')));
       }
     } finally {
       if (mounted) setState(() => _capturing = false);
@@ -116,11 +132,30 @@ class _FaceCaptureScreenState extends State<FaceCaptureScreen> {
             padding: const EdgeInsets.all(16),
             child: Text(widget.subtitle, style: Theme.of(context).textTheme.bodyMedium),
           ),
+          if (_qualityHint != null)
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: Material(
+                color: AppTheme.error.withValues(alpha: 0.1),
+                borderRadius: BorderRadius.circular(10),
+                child: Padding(
+                  padding: const EdgeInsets.all(12),
+                  child: Text(_qualityHint!, style: const TextStyle(color: AppTheme.error)),
+                ),
+              ),
+            ),
+          const Padding(
+            padding: EdgeInsets.fromLTRB(16, 8, 16, 0),
+            child: Text(
+              'Tips: one face only · open eyes · no mask · even lighting · specs OK if eyes visible',
+              style: TextStyle(fontSize: 12),
+            ),
+          ),
           Expanded(child: _buildPreview()),
           Padding(
             padding: const EdgeInsets.all(20),
             child: AppButton(
-              label: _capturing ? 'Capturing…' : 'Capture & send to API',
+              label: _capturing ? 'Checking…' : 'Capture & send to API',
               icon: Icons.camera,
               onPressed: _capturing || _controller == null ? null : _capture,
             ),
@@ -152,7 +187,7 @@ class _FaceCaptureScreenState extends State<FaceCaptureScreen> {
               right: 0,
               bottom: 16,
               child: Text(
-                'Align your face in the oval — live preview, API match on capture',
+                'Align face in oval — quality checked locally, match on API',
                 textAlign: TextAlign.center,
                 style: Theme.of(context).textTheme.bodySmall?.copyWith(
                       color: Colors.white,
