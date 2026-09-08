@@ -44,6 +44,8 @@ class AppState extends ChangeNotifier {
   String? sessionId;
   Map<String, dynamic>? lastSession;
   FlowStep step = FlowStep.setup;
+  bool manualMode = false;
+  bool navigateToResult = false;
 
   bool get _hasValidClientCreds => AppSecrets(
         clientId: clientId,
@@ -236,8 +238,26 @@ class AppState extends ChangeNotifier {
     });
   }
 
+  Future<void> startQuickFlow() async {
+    manualMode = false;
+    await resetFlow();
+    await createIdentity();
+  }
+
+  void setManualMode(bool value) {
+    manualMode = value;
+    notifyListeners();
+  }
+
+  Future<void> afterEnrollInQuickFlow() async {
+    if (manualMode || error != null) return;
+    await issueQr();
+    if (error != null) return;
+    await startVerification();
+  }
+
   Future<void> createIdentity() async {
-    _run(() async {
+    await _run(() async {
       final body = await api.createIdentity();
       identityId = body['id'] as String;
       await api.createConsent(identityId!);
@@ -248,16 +268,19 @@ class AppState extends ChangeNotifier {
   Future<void> captureAndEnroll() async {
     final image = await _pickImage();
     if (image == null) return;
-    _run(() async {
+    await _run(() async {
       final b64 = base64Encode(image);
       final body = await api.enrollFace(identityId: identityId!, imageBase64: b64);
       enrollmentId = body['id'] as String;
       step = FlowStep.showQr;
     });
+    if (!manualMode && error == null) {
+      await afterEnrollInQuickFlow();
+    }
   }
 
   Future<void> issueQr() async {
-    _run(() async {
+    await _run(() async {
       final body = await api.issueQrReference(identityId!);
       qrToken = body['token'] as String;
       step = FlowStep.startVerification;
@@ -265,7 +288,7 @@ class AppState extends ChangeNotifier {
   }
 
   Future<void> startVerification() async {
-    _run(() async {
+    await _run(() async {
       final body = await api.createVerificationSession(identityId!);
       sessionId = body['id'] as String;
       lastSession = body;
@@ -276,14 +299,72 @@ class AppState extends ChangeNotifier {
   Future<void> captureAndVerify() async {
     final image = await _pickImage();
     if (image == null) return;
-    _run(() async {
-      final b64 = base64Encode(image);
-      var session = await api.submitFaceCheck(sessionId: sessionId!, imageBase64: b64);
-      session = await api.submitLivenessCheck(sessionId: sessionId!, imageBase64: b64);
-      session = await api.completeSession(sessionId!);
-      lastSession = session;
-      step = FlowStep.result;
+    await _run(() async {
+      await _runVerificationPipeline(base64Encode(image));
     });
+  }
+
+  Future<void> _runVerificationPipeline(String b64) async {
+    Map<String, dynamic> session;
+
+    session = await _submitCheckSafely(
+      () => api.submitFaceCheck(sessionId: sessionId!, imageBase64: b64),
+    );
+    lastSession = session;
+
+    session = await _submitCheckSafely(
+      () => api.submitLivenessCheck(sessionId: sessionId!, imageBase64: b64),
+    );
+    lastSession = session;
+
+    if (_allChecksPassed(session)) {
+      session = await _completeSafely();
+    } else {
+      // Failed checks cannot complete on API — still show outcome to user.
+      try {
+        session = await api.getSession(sessionId!);
+      } catch (_) {
+        session = lastSession!;
+      }
+    }
+
+    lastSession = session;
+    step = FlowStep.result;
+    navigateToResult = true;
+    notifyListeners();
+  }
+
+  Future<Map<String, dynamic>> _submitCheckSafely(
+    Future<Map<String, dynamic>> Function() submit,
+  ) async {
+    try {
+      return await submit();
+    } on ApiException catch (e) {
+      if (e.code == 'CHECK_TERMINAL') {
+        return api.getSession(sessionId!);
+      }
+      rethrow;
+    }
+  }
+
+  Future<Map<String, dynamic>> _completeSafely() async {
+    try {
+      return await api.completeSession(sessionId!);
+    } on ApiException catch (e) {
+      if (e.code == 'SESSION_TERMINAL' || e.code == 'CHECKS_INCOMPLETE') {
+        return api.getSession(sessionId!);
+      }
+      rethrow;
+    }
+  }
+
+  bool _allChecksPassed(Map<String, dynamic> session) {
+    final checks = (session['checks'] as List<dynamic>? ?? []).cast<Map<String, dynamic>>();
+    return checks.isNotEmpty && checks.every((c) => c['status'] == 'passed');
+  }
+
+  void clearNavigateToResult() {
+    navigateToResult = false;
   }
 
   Future<void> resetFlow() async {
@@ -292,6 +373,8 @@ class AppState extends ChangeNotifier {
     qrToken = null;
     sessionId = null;
     lastSession = null;
+    navigateToResult = false;
+    error = null;
     step = FlowStep.createIdentity;
     notifyListeners();
   }

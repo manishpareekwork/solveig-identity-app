@@ -1,6 +1,10 @@
 import 'package:go_router/go_router.dart';
 
+import '../features/flow/flow_models.dart';
 import '../features/flow/flow_screen.dart';
+import '../features/flow/home_screen.dart';
+import '../features/flow/setup_screen.dart';
+import '../features/flow/verification_result_screen.dart';
 import '../state/app_state.dart';
 
 GoRouter createRouter(AppState appState) {
@@ -15,8 +19,19 @@ GoRouter createRouter(AppState appState) {
       return null;
     },
     routes: [
-      GoRoute(path: '/', builder: (context, state) => const FlowScreen()),
+      GoRoute(path: '/', builder: (context, state) => const HomeScreen()),
+      GoRoute(path: '/flow', builder: (context, state) => const FlowScreen()),
       GoRoute(path: '/setup', builder: (context, state) => const SetupScreen()),
+      GoRoute(
+        path: '/result',
+        builder: (context, state) {
+          final extra = state.extra;
+          if (extra is VerificationResultArgs) {
+            return VerificationResultScreen(args: extra);
+          }
+          return const FlowScreen();
+        },
+      ),
     ],
   );
 }
