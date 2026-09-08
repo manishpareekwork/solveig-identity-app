@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
@@ -6,6 +8,7 @@ import 'package:qr_flutter/qr_flutter.dart';
 import '../../core/theme/app_theme.dart';
 import '../../state/app_state.dart';
 import '../../widgets/app_button.dart';
+import '../../widgets/live_api_banner.dart';
 import 'verification_result_screen.dart';
 
 class FlowScreen extends StatefulWidget {
@@ -57,6 +60,8 @@ class _FlowScreenState extends State<FlowScreen> {
           ListView(
             padding: const EdgeInsets.all(20),
             children: [
+              const LiveApiBanner(compact: true),
+              const SizedBox(height: 16),
               _ProgressBar(step: state.step, manual: state.manualMode),
               const SizedBox(height: 20),
               _ActiveStepPanel(state: state),
@@ -194,14 +199,14 @@ class _ActiveStepPanel extends StatelessWidget {
 
   static String _subtitle(AppState state) => switch (state.step) {
         FlowStep.createIdentity => 'Register a new identity on the platform.',
-        FlowStep.enrollFace => 'Take a front-camera photo to enroll your face template.',
+        FlowStep.enrollFace => 'Live front-camera preview — enroll sends one frame to the API.',
         FlowStep.showQr => state.manualMode
             ? 'Issue an opaque QR reference (no PII).'
             : 'QR issued automatically.',
         FlowStep.startVerification => state.manualMode
             ? 'Open a verification session for 1:1 face + liveness checks.'
             : 'Session started automatically.',
-        FlowStep.captureVerify => 'Take a photo — face match and liveness run on the server.',
+        FlowStep.captureVerify => 'Live camera preview — 1:1 match & liveness run on Solveig API when you capture.',
         FlowStep.result => 'Verification finished.',
         _ => '',
       };
@@ -220,9 +225,15 @@ class _ActiveStepPanel extends StatelessWidget {
         ],
       FlowStep.enrollFace => [
           AppButton(
-            label: 'Open camera & enroll',
-            icon: Icons.camera_front,
-            onPressed: state.captureAndEnroll,
+            label: 'Live camera — enroll',
+            icon: Icons.videocam,
+            onPressed: () => _openLiveCapture(
+              context,
+              state,
+              title: 'Enroll face',
+              subtitle: 'Align your face in the oval. Enrollment template is created on the Solveig API — not stored as a static match on this device.',
+              onCaptured: state.enrollWithImageBytes,
+            ),
           ),
         ],
       FlowStep.showQr => [
@@ -239,9 +250,15 @@ class _ActiveStepPanel extends StatelessWidget {
         ],
       FlowStep.captureVerify => [
           AppButton(
-            label: 'Open camera & verify',
-            icon: Icons.verified_user,
-            onPressed: state.captureAndVerify,
+            label: 'Live camera — verify',
+            icon: Icons.videocam,
+            onPressed: () => _openLiveCapture(
+              context,
+              state,
+              title: 'Verify face',
+              subtitle: 'Align your face and capture. Match accuracy and liveness scores come back from the live API.',
+              onCaptured: state.verifyWithImageBytes,
+            ),
           ),
         ],
       FlowStep.result => [
@@ -267,6 +284,21 @@ class _ActiveStepPanel extends StatelessWidget {
         ],
       _ => [],
     };
+  }
+
+  Future<void> _openLiveCapture(
+    BuildContext context,
+    AppState state, {
+    required String title,
+    required String subtitle,
+    required Future<void> Function(List<int> bytes) onCaptured,
+  }) async {
+    final bytes = await context.push<Uint8List>(
+      '/capture',
+      extra: {'title': title, 'subtitle': subtitle},
+    );
+    if (bytes == null || !context.mounted) return;
+    await onCaptured(bytes);
   }
 }
 

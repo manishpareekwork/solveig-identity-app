@@ -6,6 +6,8 @@ class VerificationResultArgs {
     this.identityId,
     this.sessionId,
     this.message,
+    this.faceMatchConfidence,
+    this.livenessConfidence,
   });
 
   final bool passed;
@@ -14,4 +16,6 @@ class VerificationResultArgs {
   final String? identityId;
   final String? sessionId;
   final String? message;
+  final double? faceMatchConfidence;
+  final double? livenessConfidence;
 }

@@ -3,6 +3,8 @@ import 'package:go_router/go_router.dart';
 
 import '../../core/theme/app_theme.dart';
 import '../../widgets/app_button.dart';
+import '../../widgets/live_api_banner.dart';
+import '../../utils/confidence_format.dart';
 import 'flow_models.dart';
 
 class VerificationResultScreen extends StatelessWidget {
@@ -21,6 +23,8 @@ class VerificationResultScreen extends StatelessWidget {
       body: ListView(
         padding: const EdgeInsets.all(20),
         children: [
+          const LiveApiBanner(compact: true),
+          const SizedBox(height: 16),
           Row(
             children: [
               Container(
@@ -46,6 +50,13 @@ class VerificationResultScreen extends StatelessWidget {
           if (args.message != null) ...[
             const SizedBox(height: 12),
             Text(args.message!, style: Theme.of(context).textTheme.bodyLarge),
+          ],
+          if (args.faceMatchConfidence != null || args.livenessConfidence != null) ...[
+            const SizedBox(height: 16),
+            _ConfidenceSummary(
+              face: args.faceMatchConfidence,
+              liveness: args.livenessConfidence,
+            ),
           ],
           const SizedBox(height: 20),
           Text('Check outcomes', style: Theme.of(context).textTheme.titleLarge),
@@ -88,6 +99,7 @@ class _CheckCard extends StatelessWidget {
     final type = check['check_type'] as String? ?? 'check';
     final status = check['status'] as String? ?? 'unknown';
     final code = check['result_code'] as String? ?? '-';
+    final confidence = checkConfidence(check);
     final ok = status == 'passed';
     final color = ok ? AppTheme.success : (status == 'failed' ? AppTheme.error : AppTheme.warning);
 
@@ -96,7 +108,17 @@ class _CheckCard extends StatelessWidget {
       child: ListTile(
         leading: Icon(ok ? Icons.check_circle : Icons.cancel, color: color),
         title: Text(_label(type)),
-        subtitle: Text('$status · $code'),
+        subtitle: Text(
+          confidence != null
+              ? '$status · $code · confidence ${formatConfidencePercent(confidence)}'
+              : '$status · $code',
+        ),
+        trailing: confidence != null
+            ? Text(
+                formatConfidencePercent(confidence),
+                style: TextStyle(fontWeight: FontWeight.w700, color: color),
+              )
+            : null,
       ),
     );
   }
@@ -107,6 +129,64 @@ class _CheckCard extends StatelessWidget {
       'liveness' => 'Liveness',
       _ => type,
     };
+  }
+}
+
+class _ConfidenceSummary extends StatelessWidget {
+  const _ConfidenceSummary({this.face, this.liveness});
+
+  final double? face;
+  final double? liveness;
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      color: AppTheme.card,
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Match accuracy (API)', style: Theme.of(context).textTheme.titleSmall),
+            const SizedBox(height: 12),
+            if (face != null)
+              _MetricRow(
+                label: '1:1 face match',
+                value: formatConfidencePercent(face),
+                icon: Icons.face_retouching_natural,
+              ),
+            if (liveness != null) ...[
+              const SizedBox(height: 8),
+              _MetricRow(
+                label: 'Liveness score',
+                value: formatConfidencePercent(liveness),
+                icon: Icons.verified_user_outlined,
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _MetricRow extends StatelessWidget {
+  const _MetricRow({required this.label, required this.value, required this.icon});
+
+  final String label;
+  final String value;
+  final IconData icon;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Icon(icon, size: 20, color: AppTheme.primary),
+        const SizedBox(width: 8),
+        Expanded(child: Text(label)),
+        Text(value, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 16)),
+      ],
+    );
   }
 }
 
@@ -143,5 +223,7 @@ VerificationResultArgs resultArgsFromSession(Map<String, dynamic> session) {
     identityId: session['identity_id'] as String?,
     sessionId: session['id'] as String?,
     message: message,
+    faceMatchConfidence: checkConfidence(findCheck(checks, 'face_verification') ?? {}),
+    livenessConfidence: checkConfidence(findCheck(checks, 'liveness') ?? {}),
   );
 }

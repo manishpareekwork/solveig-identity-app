@@ -1,5 +1,6 @@
 import 'package:go_router/go_router.dart';
 
+import '../features/capture/face_capture_screen.dart';
 import '../features/flow/flow_models.dart';
 import '../features/flow/flow_screen.dart';
 import '../features/flow/home_screen.dart';
@@ -21,6 +22,17 @@ GoRouter createRouter(AppState appState) {
     routes: [
       GoRoute(path: '/', builder: (context, state) => const HomeScreen()),
       GoRoute(path: '/flow', builder: (context, state) => const FlowScreen()),
+      GoRoute(
+        path: '/capture',
+        builder: (context, state) {
+          final extra = state.extra;
+          final map = extra is Map ? extra.cast<String, String>() : const <String, String>{};
+          return FaceCaptureScreen(
+            title: map['title'] ?? 'Capture face',
+            subtitle: map['subtitle'] ?? 'Live camera preview — sent to Solveig API on capture.',
+          );
+        },
+      ),
       GoRoute(path: '/setup', builder: (context, state) => const SetupScreen()),
       GoRoute(
         path: '/result',

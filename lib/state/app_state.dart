@@ -1,7 +1,6 @@
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
-import 'package:image_picker/image_picker.dart';
 
 import '../config/defaults.dart';
 import '../config/secrets_loader.dart';
@@ -23,7 +22,6 @@ class AppState extends ChangeNotifier {
   AppState(this._storage);
 
   final AuthStorage _storage;
-  final _picker = ImagePicker();
 
   bool loading = false;
   String? error;
@@ -265,9 +263,7 @@ class AppState extends ChangeNotifier {
     });
   }
 
-  Future<void> captureAndEnroll() async {
-    final image = await _pickImage();
-    if (image == null) return;
+  Future<void> enrollWithImageBytes(List<int> image) async {
     await _run(() async {
       final b64 = base64Encode(image);
       final body = await api.enrollFace(identityId: identityId!, imageBase64: b64);
@@ -277,6 +273,12 @@ class AppState extends ChangeNotifier {
     if (!manualMode && error == null) {
       await afterEnrollInQuickFlow();
     }
+  }
+
+  Future<void> verifyWithImageBytes(List<int> image) async {
+    await _run(() async {
+      await _runVerificationPipeline(base64Encode(image));
+    });
   }
 
   Future<void> issueQr() async {
@@ -293,14 +295,6 @@ class AppState extends ChangeNotifier {
       sessionId = body['id'] as String;
       lastSession = body;
       step = FlowStep.captureVerify;
-    });
-  }
-
-  Future<void> captureAndVerify() async {
-    final image = await _pickImage();
-    if (image == null) return;
-    await _run(() async {
-      await _runVerificationPipeline(base64Encode(image));
     });
   }
 
@@ -377,17 +371,6 @@ class AppState extends ChangeNotifier {
     error = null;
     step = FlowStep.createIdentity;
     notifyListeners();
-  }
-
-  Future<List<int>?> _pickImage() async {
-    final file = await _picker.pickImage(
-      source: ImageSource.camera,
-      preferredCameraDevice: CameraDevice.front,
-      imageQuality: 85,
-      maxWidth: 1280,
-    );
-    if (file == null) return null;
-    return file.readAsBytes();
   }
 
   Future<void> _run(Future<void> Function() action) async {

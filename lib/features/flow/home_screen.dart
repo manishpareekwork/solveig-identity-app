@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 
 import '../../core/theme/app_theme.dart';
 import '../../state/app_state.dart';
+import '../../widgets/live_api_banner.dart';
 
 class HomeScreen extends StatelessWidget {
   const HomeScreen({super.key});
@@ -23,6 +24,8 @@ class HomeScreen extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
+            const LiveApiBanner(),
+            const SizedBox(height: 20),
             Text(
               'Verify an identity against the platform API.',
               style: Theme.of(context).textTheme.bodyLarge,
