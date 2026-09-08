@@ -10,10 +10,12 @@ class AuthStorage {
   static const _clientSecret = 'client_secret';
   static const _accessToken = 'access_token';
   static const _adminToken = 'admin_token';
+  static const _tenantId = 'tenant_id';
 
   Future<void> saveConnection({
     required String baseUrl,
     required String tenantSlug,
+    required String tenantId,
     required String clientId,
     required String clientKey,
     required String clientSecret,
@@ -23,6 +25,7 @@ class AuthStorage {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_baseUrl, baseUrl);
     await prefs.setString(_tenantSlug, tenantSlug);
+    await prefs.setString(_tenantId, tenantId);
     await prefs.setString(_clientId, clientId);
     await prefs.setString(_clientKey, clientKey);
     await prefs.setString(_clientSecret, clientSecret);
@@ -37,6 +40,7 @@ class AuthStorage {
     return {
       'baseUrl': prefs.getString(_baseUrl) ?? kDefaultApiBaseUrl,
       'tenantSlug': prefs.getString(_tenantSlug) ?? kDefaultTenantSlug,
+      'tenantId': prefs.getString(_tenantId) ?? '',
       'clientId': prefs.getString(_clientId) ?? '',
       'clientKey': prefs.getString(_clientKey) ?? '',
       'clientSecret': prefs.getString(_clientSecret) ?? '',

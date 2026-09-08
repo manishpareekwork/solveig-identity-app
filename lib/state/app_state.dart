@@ -4,6 +4,8 @@ import 'package:flutter/foundation.dart';
 import 'package:image_picker/image_picker.dart';
 
 import '../config/defaults.dart';
+import '../config/secrets_loader.dart';
+import '../utils/jwt_utils.dart';
 import '../services/auth_storage.dart';
 import '../services/identity_api_client.dart';
 
@@ -29,6 +31,7 @@ class AppState extends ChangeNotifier {
 
   String baseUrl = kDefaultApiBaseUrl;
   String tenantSlug = kDefaultTenantSlug;
+  String tenantId = '';
   String clientId = '';
   String clientKey = '';
   String clientSecret = '';
@@ -42,15 +45,34 @@ class AppState extends ChangeNotifier {
   Map<String, dynamic>? lastSession;
   FlowStep step = FlowStep.setup;
 
+  bool get _hasValidClientCreds => AppSecrets(
+        clientId: clientId,
+        clientKey: clientKey,
+        clientSecret: clientSecret,
+      ).hasClientCredentials;
+
   IdentityApiClient get api => IdentityApiClient(
         baseUrl: baseUrl,
         tenantSlug: tenantSlug,
+        tenantId: tenantId,
         accessToken: accessToken,
         clientId: clientId,
         clientKey: clientKey,
         clientSecret: clientSecret,
         adminToken: adminToken,
       );
+
+  void _applyToken(String token, {String? resolvedTenantId}) {
+    accessToken = token;
+    tenantId = resolvedTenantId ?? tenantIdFromAccessToken(token) ?? tenantId;
+  }
+
+  void _applyRegisteredClient(Map<String, dynamic> client) {
+    clientId = client['id'] as String;
+    clientKey = client['client_key'] as String;
+    clientSecret = client['client_secret'] as String;
+    tenantId = client['tenant_id'] as String;
+  }
 
   Future<void> bootstrap() async {
     loading = true;
@@ -59,22 +81,24 @@ class AppState extends ChangeNotifier {
     final data = await _storage.load();
     baseUrl = data['baseUrl']!;
     tenantSlug = data['tenantSlug']!;
+    tenantId = data['tenantId']!;
     clientId = data['clientId']!;
     clientKey = data['clientKey']!;
     clientSecret = data['clientSecret']!;
     accessToken = data['accessToken']!;
     adminToken = data['adminToken']!;
 
-    if (adminToken.isEmpty && kDevAdminToken.isNotEmpty) {
-      adminToken = kDevAdminToken;
+    final secrets = await AppSecrets.load();
+    if (adminToken.isEmpty && secrets.hasAdminToken) {
+      adminToken = secrets.adminToken;
     }
-    if (clientId.isEmpty && kDevClientId.isNotEmpty) {
-      clientId = kDevClientId;
-      clientKey = kDevClientKey;
-      clientSecret = kDevClientSecret;
+    if (!_hasValidClientCreds && secrets.hasClientCredentials) {
+      clientId = secrets.clientId;
+      clientKey = secrets.clientKey;
+      clientSecret = secrets.clientSecret;
     }
 
-    configured = accessToken.isNotEmpty && clientId.isNotEmpty;
+    configured = accessToken.isNotEmpty && _hasValidClientCreds && tenantId.isNotEmpty;
     if (!configured) {
       await autoConnect(silent: true);
     } else {
@@ -92,16 +116,17 @@ class AppState extends ChangeNotifier {
       notifyListeners();
     }
     try {
-      if (clientId.isNotEmpty && clientKey.isNotEmpty && clientSecret.isNotEmpty) {
+      if (_hasValidClientCreds) {
         final token = await IdentityApiClient(
           baseUrl: baseUrl,
           tenantSlug: tenantSlug,
+          tenantId: tenantId,
           accessToken: '',
           clientId: clientId,
           clientKey: clientKey,
           clientSecret: clientSecret,
         ).issueToken();
-        accessToken = token['access_token'] as String;
+        _applyToken(token['access_token'] as String);
       } else if (adminToken.isNotEmpty) {
         final client = await IdentityApiClient(
           baseUrl: baseUrl,
@@ -109,19 +134,18 @@ class AppState extends ChangeNotifier {
           accessToken: '',
           adminToken: adminToken,
         ).registerClient(displayName: 'Solveig Mobile Demo');
-        clientId = client['id'] as String;
-        clientKey = client['client_key'] as String;
-        clientSecret = client['client_secret'] as String;
+        _applyRegisteredClient(client);
 
         final token = await IdentityApiClient(
           baseUrl: baseUrl,
           tenantSlug: tenantSlug,
+          tenantId: tenantId,
           accessToken: '',
           clientId: clientId,
           clientKey: clientKey,
           clientSecret: clientSecret,
         ).issueToken();
-        accessToken = token['access_token'] as String;
+        _applyToken(token['access_token'] as String, resolvedTenantId: tenantId);
       } else {
         step = FlowStep.setup;
         return false;
@@ -130,6 +154,7 @@ class AppState extends ChangeNotifier {
       await _storage.saveConnection(
         baseUrl: baseUrl,
         tenantSlug: tenantSlug,
+        tenantId: tenantId,
         clientId: clientId,
         clientKey: clientKey,
         clientSecret: clientSecret,
@@ -182,24 +207,24 @@ class AppState extends ChangeNotifier {
           accessToken: '',
           adminToken: this.adminToken,
         ).registerClient(displayName: 'Solveig Mobile Demo');
-        clientId = client['id'] as String;
-        clientKey = client['client_key'] as String;
-        clientSecret = client['client_secret'] as String;
+        _applyRegisteredClient(client);
       }
 
       final token = await IdentityApiClient(
         baseUrl: this.baseUrl,
         tenantSlug: this.tenantSlug,
+        tenantId: tenantId,
         accessToken: '',
         clientId: clientId,
         clientKey: clientKey,
         clientSecret: clientSecret,
       ).issueToken();
-      accessToken = token['access_token'] as String;
+      _applyToken(token['access_token'] as String, resolvedTenantId: tenantId);
 
       await _storage.saveConnection(
         baseUrl: this.baseUrl,
         tenantSlug: this.tenantSlug,
+        tenantId: tenantId,
         clientId: clientId,
         clientKey: clientKey,
         clientSecret: clientSecret,

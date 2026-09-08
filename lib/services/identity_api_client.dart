@@ -19,7 +19,8 @@ class ApiException implements Exception {
 class IdentityApiClient {
   IdentityApiClient({
     required this.baseUrl,
-    required this.tenantSlug,
+    this.tenantSlug = kDefaultTenantSlug,
+    this.tenantId = '',
     required this.accessToken,
     this.clientId = '',
     this.clientKey = '',
@@ -28,7 +29,10 @@ class IdentityApiClient {
   });
 
   final String baseUrl;
+  /// Slug sent when registering a tenant (admin only).
   final String tenantSlug;
+  /// UUID for X-Tenant-Id on authenticated client calls.
+  final String tenantId;
   final String accessToken;
   final String clientId;
   final String clientKey;
@@ -41,11 +45,12 @@ class IdentityApiClient {
 
   Map<String, String> _headers({bool admin = false, String? correlationId}) {
     final token = admin ? adminToken : accessToken;
+    final tenantHeader = tenantId.isNotEmpty ? tenantId : tenantSlug;
     return {
       'Content-Type': 'application/json',
       'Accept': 'application/json',
       if (token.isNotEmpty) 'Authorization': 'Bearer $token',
-      'X-Tenant-Id': tenantSlug,
+      if (!admin || tenantId.isNotEmpty) 'X-Tenant-Id': tenantHeader,
       'X-Correlation-Id': correlationId ?? _uuid.v4(),
     };
   }
