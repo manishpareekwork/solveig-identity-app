@@ -66,8 +66,8 @@ class IdentityApiClient {
       } catch (_) {
         if (response.statusCode >= 500) {
           throw ApiException(
-            'Internal server error (HTTP ${response.statusCode}). '
-            'The API may need redeploy or database migration 009.',
+            'Server error (HTTP ${response.statusCode}). '
+            'Wait for Render to finish redeploying the Identity API, then try again.',
             statusCode: response.statusCode,
             code: 'SERVER_ERROR',
           );

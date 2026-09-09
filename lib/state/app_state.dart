@@ -103,7 +103,12 @@ class AppState extends ChangeNotifier {
     if (!configured) {
       await autoConnect(silent: true);
     } else {
-      step = FlowStep.createIdentity;
+      try {
+        await ensureFreshToken();
+        step = FlowStep.createIdentity;
+      } catch (_) {
+        await autoConnect(silent: true);
+      }
     }
     loading = false;
     notifyListeners();
@@ -240,6 +245,10 @@ class AppState extends ChangeNotifier {
   Future<void> startQuickFlow() async {
     manualMode = false;
     await resetFlow();
+    if (!configured) {
+      final ok = await autoConnect();
+      if (!ok) return;
+    }
     await createIdentity();
   }
 
@@ -255,8 +264,58 @@ class AppState extends ChangeNotifier {
     await startVerification();
   }
 
+  /// Refresh client access token using stored client credentials.
+  Future<void> refreshAccessToken() async {
+    if (!_hasValidClientCreds) {
+      throw ApiException('Client credentials required to refresh token');
+    }
+    final token = await IdentityApiClient(
+      baseUrl: baseUrl,
+      tenantSlug: tenantSlug,
+      tenantId: tenantId,
+      accessToken: '',
+      clientId: clientId,
+      clientKey: clientKey,
+      clientSecret: clientSecret,
+    ).issueToken();
+    _applyToken(token['access_token'] as String);
+    await _storage.saveConnection(
+      baseUrl: baseUrl,
+      tenantSlug: tenantSlug,
+      tenantId: tenantId,
+      clientId: clientId,
+      clientKey: clientKey,
+      clientSecret: clientSecret,
+      accessToken: accessToken,
+      adminToken: adminToken,
+    );
+    configured = true;
+  }
+
+  /// Issue a new token when missing or near expiry; re-register client if creds are stale.
+  Future<void> ensureFreshToken() async {
+    if (!_hasValidClientCreds) {
+      final ok = await autoConnect(silent: true);
+      if (!ok) throw ApiException('Not connected — check API setup or secrets.json');
+      return;
+    }
+    if (accessToken.isEmpty || isAccessTokenExpired(accessToken)) {
+      try {
+        await refreshAccessToken();
+      } on ApiException catch (e) {
+        if (e.statusCode == 401 && adminToken.isNotEmpty) {
+          final ok = await autoConnect(silent: true);
+          if (!ok) rethrow;
+        } else {
+          rethrow;
+        }
+      }
+    }
+  }
+
   Future<void> createIdentity() async {
     await _run(() async {
+      await ensureFreshToken();
       final body = await api.createIdentity();
       identityId = body['id'] as String;
       await api.createConsent(identityId!);
@@ -376,14 +435,25 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> _run(Future<void> Function() action) async {
+  Future<void> _run(Future<void> Function() action, {bool retried = false}) async {
     loading = true;
     error = null;
     notifyListeners();
     try {
       await action();
     } on ApiException catch (e) {
-      error = e.message;
+      if (!retried &&
+          e.statusCode == 401 &&
+          (e.message.contains('invalid or expired token') || e.code == 'UNAUTHENTICATED')) {
+        try {
+          await ensureFreshToken();
+          return _run(action, retried: true);
+        } catch (_) {
+          error = e.message;
+        }
+      } else {
+        error = e.message;
+      }
     } catch (e) {
       final text = e.toString();
       error = text.startsWith('FormatException') ? 'Unexpected API response — server may be down or need redeploy.' : text;
