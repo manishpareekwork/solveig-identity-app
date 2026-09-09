@@ -7,7 +7,9 @@ import 'package:permission_handler/permission_handler.dart';
 
 import '../../core/theme/app_theme.dart';
 import '../../services/face_capture_quality.dart';
+import '../../services/face_focus.dart';
 import '../../widgets/app_button.dart';
+import '../../widgets/identity_loading.dart';
 import '../../widgets/live_api_banner.dart';
 
 class FaceCaptureScreen extends StatefulWidget {
@@ -97,8 +99,9 @@ class _FaceCaptureScreenState extends State<FaceCaptureScreen> {
       var bytes = Uint8List.fromList(await file.readAsBytes());
       bytes = await normalizeCaptureBytes(bytes);
 
-      final issue = await _quality.validateBytes(bytes);
-      if (issue != null) {
+      final result = await _quality.prepareCapture(bytes);
+      if (!result.ok) {
+        final issue = result.issue!;
         if (mounted) {
           setState(() => _qualityHint = '${issue.title}: ${issue.message}');
           ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(issue.message)));
@@ -107,7 +110,7 @@ class _FaceCaptureScreenState extends State<FaceCaptureScreen> {
       }
 
       if (!mounted) return;
-      context.pop(bytes);
+      context.pop(result.preparedBytes);
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Capture failed: $e')));
@@ -151,11 +154,18 @@ class _FaceCaptureScreenState extends State<FaceCaptureScreen> {
             const Padding(
               padding: EdgeInsets.fromLTRB(16, 8, 16, 0),
               child: Text(
-                'Tips: one face only · open eyes · no mask · even lighting · specs OK if eyes visible',
+                'Tips: face in oval · background people OK · open eyes · no mask · even lighting',
                 style: TextStyle(fontSize: 12),
               ),
             ),
-            Expanded(child: _buildPreview()),
+            Expanded(
+              child: _capturing
+                  ? const Padding(
+                      padding: EdgeInsets.symmetric(horizontal: 20),
+                      child: IdentityLoadingPanel(message: 'Checking face quality…', height: 280),
+                    )
+                  : _buildPreview(),
+            ),
             Padding(
               padding: EdgeInsets.fromLTRB(20, 12, 20, 12 + bottomInset),
               child: AppButton(
@@ -172,7 +182,10 @@ class _FaceCaptureScreenState extends State<FaceCaptureScreen> {
 
   Widget _buildPreview() {
     if (_initializing) {
-      return const Center(child: CircularProgressIndicator());
+      return const Padding(
+        padding: EdgeInsets.symmetric(horizontal: 20),
+        child: IdentityLoadingPanel(message: 'Opening camera…', height: 280),
+      );
     }
     if (_error != null) {
       return Center(child: Padding(padding: const EdgeInsets.all(24), child: Text(_error!)));
@@ -210,11 +223,7 @@ class _FaceCaptureScreenState extends State<FaceCaptureScreen> {
 class _FaceOvalPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
-    final rect = Rect.fromCenter(
-      center: Offset(size.width / 2, size.height * 0.42),
-      width: size.width * 0.72,
-      height: size.height * 0.55,
-    );
+    final rect = FaceFocusGuide.focusRect(size);
     final paint = Paint()
       ..color = AppTheme.accent.withValues(alpha: 0.85)
       ..style = PaintingStyle.stroke

@@ -1,16 +1,44 @@
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:uuid/uuid.dart';
 
 import '../config/defaults.dart';
 
 class ApiException implements Exception {
-  ApiException(this.message, {this.statusCode, this.code});
+  ApiException(
+    this.message, {
+    this.statusCode,
+    this.code,
+    this.endpoint,
+    this.correlationId,
+    this.rawBody,
+    this.retryable,
+  });
 
   final String message;
   final int? statusCode;
   final String? code;
+  final String? endpoint;
+  final String? correlationId;
+  final String? rawBody;
+  final bool? retryable;
+
+  String get fullLog {
+    final buf = StringBuffer()
+      ..writeln('endpoint: ${endpoint ?? 'unknown'}')
+      ..writeln('http_status: ${statusCode ?? 'unknown'}')
+      ..writeln('error_code: ${code ?? 'unknown'}')
+      ..writeln('correlation_id: ${correlationId ?? 'unknown'}')
+      ..writeln('retryable: ${retryable ?? false}')
+      ..writeln('message: $message');
+    if (rawBody != null && rawBody!.isNotEmpty) {
+      buf.writeln('response_body:');
+      buf.writeln(rawBody);
+    }
+    return buf.toString().trim();
+  }
 
   @override
   String toString() => message;
@@ -29,9 +57,7 @@ class IdentityApiClient {
   });
 
   final String baseUrl;
-  /// Slug sent when registering a tenant (admin only).
   final String tenantSlug;
-  /// UUID for X-Tenant-Id on authenticated client calls.
   final String tenantId;
   final String accessToken;
   final String clientId;
@@ -55,7 +81,66 @@ class IdentityApiClient {
     };
   }
 
-  Future<Map<String, dynamic>> _decode(http.Response response) async {
+  Future<Map<String, dynamic>> _get(String path, {bool admin = false}) async {
+    final corr = _uuid.v4();
+    final res = await http.get(_uri(path), headers: _headers(admin: admin, correlationId: corr));
+    return _decode(res, method: 'GET', path: path, correlationId: corr);
+  }
+
+  Future<Map<String, dynamic>> _post(
+    String path, {
+    Map<String, String>? extraHeaders,
+    Object? body,
+    bool admin = false,
+  }) async {
+    final corr = _uuid.v4();
+    final headers = {..._headers(admin: admin, correlationId: corr), ...?extraHeaders};
+    final res = await http.post(
+      _uri(path),
+      headers: headers,
+      body: body == null ? null : jsonEncode(body),
+    );
+    return _decode(res, method: 'POST', path: path, correlationId: corr);
+  }
+
+  Never _throwApi({
+    required String method,
+    required String path,
+    required String correlationId,
+    required int statusCode,
+    required String message,
+    String? code,
+    String? rawBody,
+    bool? retryable,
+  }) {
+    final exc = ApiException(
+      message,
+      statusCode: statusCode,
+      code: code,
+      endpoint: '$method $path',
+      correlationId: correlationId,
+      rawBody: _trimBody(rawBody),
+      retryable: retryable,
+    );
+    if (kDebugMode) {
+      debugPrint('=== In-house API error ===\n${exc.fullLog}');
+    }
+    throw exc;
+  }
+
+  String? _trimBody(String? body) {
+    if (body == null || body.isEmpty) return body;
+    const max = 4000;
+    return body.length <= max ? body : '${body.substring(0, max)}\n…(truncated)';
+  }
+
+  Future<Map<String, dynamic>> _decode(
+    http.Response response, {
+    required String method,
+    required String path,
+    required String correlationId,
+  }) async {
+    final responseCorr = response.headers['x-correlation-id'] ?? correlationId;
     Map<String, dynamic>? body;
     if (response.body.isNotEmpty) {
       try {
@@ -64,172 +149,125 @@ class IdentityApiClient {
           body = decoded;
         }
       } catch (_) {
-        if (response.statusCode >= 500) {
-          throw ApiException(
-            'Server error (HTTP ${response.statusCode}). '
-            'Wait for Render to finish redeploying the Identity API, then try again.',
-            statusCode: response.statusCode,
-            code: 'SERVER_ERROR',
-          );
-        }
-        throw ApiException(
-          'Unexpected response from API (HTTP ${response.statusCode})',
+        _throwApi(
+          method: method,
+          path: path,
+          correlationId: responseCorr,
           statusCode: response.statusCode,
-          code: 'INVALID_RESPONSE',
+          code: response.statusCode >= 500 ? 'SERVER_ERROR' : 'INVALID_RESPONSE',
+          message: response.statusCode >= 500
+              ? 'Server returned non-JSON error (HTTP ${response.statusCode})'
+              : 'Unexpected response from API (HTTP ${response.statusCode})',
+          rawBody: response.body,
         );
       }
     }
     if (response.statusCode >= 400) {
       final err = body?['error'] as Map<String, dynamic>?;
-      throw ApiException(
-        err?['message'] as String? ?? 'Request failed (${response.statusCode})',
+      final code = err?['code'] as String?;
+      var message = err?['message'] as String? ?? 'Request failed (${response.statusCode})';
+      final retryable = err?['retryable'] as bool?;
+      if (code == 'BIOMETRIC_UNAVAILABLE') {
+        message = 'Biometric processing failed on server. See full log below.';
+      }
+      _throwApi(
+        method: method,
+        path: path,
+        correlationId: err?['correlation_id'] as String? ?? responseCorr,
         statusCode: response.statusCode,
-        code: err?['code'] as String?,
+        code: code,
+        message: message,
+        rawBody: response.body,
+        retryable: retryable,
       );
     }
     return body ?? {};
   }
 
-  Future<Map<String, dynamic>> health() async {
-    final res = await http.get(_uri('/health'));
-    return _decode(res);
-  }
+  Future<Map<String, dynamic>> health() => _get('/health');
 
-  Future<Map<String, dynamic>> registerClient({
-    required String displayName,
-  }) async {
-    final res = await http.post(
-      _uri('/v1/clients'),
-      headers: _headers(admin: true),
-      body: jsonEncode({
-        'tenant_slug': tenantSlug,
-        'tenant_display_name': 'Demo Tenant',
-        'display_name': displayName,
-        'allowed_scopes': kRequiredScopes,
-      }),
-    );
-    return _decode(res);
-  }
+  Future<Map<String, dynamic>> registerClient({required String displayName}) => _post(
+        '/v1/clients',
+        admin: true,
+        body: {
+          'tenant_slug': tenantSlug,
+          'tenant_display_name': 'Demo Tenant',
+          'display_name': displayName,
+          'allowed_scopes': kRequiredScopes,
+        },
+      );
 
-  Future<Map<String, dynamic>> issueToken() async {
-    final res = await http.post(
-      _uri('/v1/clients/$clientId/tokens'),
-      headers: _headers(),
-      body: jsonEncode({
-        'client_key': clientKey,
-        'client_secret': clientSecret,
-      }),
-    );
-    return _decode(res);
-  }
+  Future<Map<String, dynamic>> issueToken() => _post(
+        '/v1/clients/$clientId/tokens',
+        body: {'client_key': clientKey, 'client_secret': clientSecret},
+      );
 
-  Future<Map<String, dynamic>> createIdentity() async {
-    final res = await http.post(
-      _uri('/v1/identities'),
-      headers: {
-        ..._headers(),
-        'Idempotency-Key': _uuid.v4(),
-      },
-      body: jsonEncode({}),
-    );
-    return _decode(res);
-  }
+  Future<Map<String, dynamic>> createIdentity() => _post(
+        '/v1/identities',
+        extraHeaders: {'Idempotency-Key': _uuid.v4()},
+        body: {},
+      );
 
-  Future<Map<String, dynamic>> getIdentity(String id) async {
-    final res = await http.get(
-      _uri('/v1/identities/$id'),
-      headers: _headers(),
-    );
-    return _decode(res);
-  }
+  Future<Map<String, dynamic>> getIdentity(String id) => _get('/v1/identities/$id');
 
-  Future<Map<String, dynamic>> createConsent(String identityId) async {
-    final res = await http.post(
-      _uri('/v1/identities/$identityId/consents'),
-      headers: _headers(),
-      body: jsonEncode({
-        'purpose': 'identity_verification',
-        'purpose_version': '1.0',
-        'granted': true,
-      }),
-    );
-    return _decode(res);
-  }
+  Future<Map<String, dynamic>> createConsent(String identityId) => _post(
+        '/v1/identities/$identityId/consents',
+        body: {
+          'purpose': 'identity_verification',
+          'purpose_version': '1.0',
+          'granted': true,
+        },
+      );
 
   Future<Map<String, dynamic>> enrollFace({
     required String identityId,
     required String imageBase64,
-  }) async {
-    final res = await http.post(
-      _uri('/v1/face/enrollments'),
-      headers: _headers(),
-      body: jsonEncode({
-        'identity_id': identityId,
-        'image_base64': imageBase64,
-      }),
-    );
-    return _decode(res);
-  }
+  }) =>
+      _post(
+        '/v1/face/enrollments',
+        body: {'identity_id': identityId, 'image_base64': imageBase64},
+      );
 
-  Future<Map<String, dynamic>> issueQrReference(String identityId) async {
-    final res = await http.post(
-      _uri('/v1/qr/references'),
-      headers: _headers(),
-      body: jsonEncode({'identity_id': identityId}),
-    );
-    return _decode(res);
-  }
+  Future<Map<String, dynamic>> issueQrReference(String identityId) => _post(
+        '/v1/qr/references',
+        body: {'identity_id': identityId},
+      );
 
-  Future<Map<String, dynamic>> createVerificationSession(String identityId) async {
-    final res = await http.post(
-      _uri('/v1/verification-sessions'),
-      headers: _headers(),
-      body: jsonEncode({
-        'identity_id': identityId,
-        'required_checks': ['face_verification', 'liveness'],
-      }),
-    );
-    return _decode(res);
-  }
+  Future<Map<String, dynamic>> createVerificationSession(
+    String identityId, {
+    List<String>? requiredChecks,
+  }) =>
+      _post(
+        '/v1/verification-sessions',
+        body: {
+          'identity_id': identityId,
+          'required_checks': requiredChecks ?? ['face_verification', 'liveness'],
+        },
+      );
 
   Future<Map<String, dynamic>> submitFaceCheck({
     required String sessionId,
     required String imageBase64,
-  }) async {
-    final res = await http.post(
-      _uri('/v1/verification-sessions/$sessionId/checks/face'),
-      headers: _headers(),
-      body: jsonEncode({'image_base64': imageBase64}),
-    );
-    return _decode(res);
-  }
+  }) =>
+      _post(
+        '/v1/verification-sessions/$sessionId/checks/face',
+        body: {'image_base64': imageBase64},
+      );
 
   Future<Map<String, dynamic>> submitLivenessCheck({
     required String sessionId,
     required String imageBase64,
-  }) async {
-    final res = await http.post(
-      _uri('/v1/verification-sessions/$sessionId/checks/liveness'),
-      headers: _headers(),
-      body: jsonEncode({'image_base64': imageBase64}),
-    );
-    return _decode(res);
-  }
+  }) =>
+      _post(
+        '/v1/verification-sessions/$sessionId/checks/liveness',
+        body: {'image_base64': imageBase64},
+      );
 
-  Future<Map<String, dynamic>> completeSession(String sessionId) async {
-    final res = await http.post(
-      _uri('/v1/verification-sessions/$sessionId/complete'),
-      headers: _headers(),
-      body: jsonEncode({'decision': 'approved'}),
-    );
-    return _decode(res);
-  }
+  Future<Map<String, dynamic>> completeSession(String sessionId) => _post(
+        '/v1/verification-sessions/$sessionId/complete',
+        body: {'decision': 'approved'},
+      );
 
-  Future<Map<String, dynamic>> getSession(String sessionId) async {
-    final res = await http.get(
-      _uri('/v1/verification-sessions/$sessionId'),
-      headers: _headers(),
-    );
-    return _decode(res);
-  }
+  Future<Map<String, dynamic>> getSession(String sessionId) =>
+      _get('/v1/verification-sessions/$sessionId');
 }

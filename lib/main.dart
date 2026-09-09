@@ -23,7 +23,7 @@ class SolveigIdentityApp extends StatelessWidget {
     return ChangeNotifierProvider.value(
       value: appState,
       child: MaterialApp.router(
-        title: 'Solveig Identity',
+        title: 'Identity Verification',
         theme: ThemeData(
           colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF1B4D89)),
           useMaterial3: true,

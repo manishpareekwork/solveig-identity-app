@@ -1,6 +1,9 @@
+import 'dart:convert';
+
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../config/defaults.dart';
+import '../models/registered_profile.dart';
 
 class AuthStorage {
   static const _baseUrl = 'api_base_url';
@@ -11,6 +14,9 @@ class AuthStorage {
   static const _accessToken = 'access_token';
   static const _adminToken = 'admin_token';
   static const _tenantId = 'tenant_id';
+  static const _profilesJson = 'registered_profiles_json';
+  static const _regIdentityId = 'reg_identity_id';
+  static const _regEnrollmentId = 'reg_enrollment_id';
 
   Future<void> saveConnection({
     required String baseUrl,
@@ -57,5 +63,39 @@ class AuthStorage {
   Future<void> clear() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(_accessToken);
+  }
+
+  Future<List<RegisteredProfile>> loadRegisteredProfiles() async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString(_profilesJson);
+    if (raw != null && raw.isNotEmpty) {
+      final list = (jsonDecode(raw) as List<dynamic>).cast<Map<String, dynamic>>();
+      return list.map(RegisteredProfile.fromJson).toList();
+    }
+    return _migrateLegacyProfile(prefs);
+  }
+
+  Future<List<RegisteredProfile>> _migrateLegacyProfile(SharedPreferences prefs) async {
+    final identityId = prefs.getString(_regIdentityId);
+    final enrollmentId = prefs.getString(_regEnrollmentId);
+    if (identityId == null || enrollmentId == null) return [];
+
+    final profile = RegisteredProfile(
+      localId: identityId,
+      label: 'Profile 1',
+      identityId: identityId,
+      enrollmentId: enrollmentId,
+      enrolledAt: DateTime.now(),
+    );
+    await saveRegisteredProfiles([profile]);
+    await prefs.remove(_regIdentityId);
+    await prefs.remove(_regEnrollmentId);
+    return [profile];
+  }
+
+  Future<void> saveRegisteredProfiles(List<RegisteredProfile> profiles) async {
+    final prefs = await SharedPreferences.getInstance();
+    final encoded = jsonEncode(profiles.map((p) => p.toJson()).toList());
+    await prefs.setString(_profilesJson, encoded);
   }
 }

@@ -7,7 +7,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
-	<string>Solveig Identity App</string>
+	<string>Identity Verification</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -48,7 +48,7 @@
 		</dict>
 	</dict>
 	<key>NSCameraUsageDescription</key>
-	<string>Camera is used for live face enrollment and verification sent to the Solveig Identity API.</string>
+	<string>Camera is used for live face enrollment and verification sent to the in-house identity API.</string>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
 	<key>UILaunchStoryboardName</key>

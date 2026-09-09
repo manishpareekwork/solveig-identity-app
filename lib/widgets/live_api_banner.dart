@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../core/theme/app_theme.dart';
 
-/// Small banner: verification uses remote Solveig API, not on-device matching.
+/// Small banner: verification uses remote in-house API, not on-device matching.
 class LiveApiBanner extends StatelessWidget {
   const LiveApiBanner({super.key, this.compact = false});
 
@@ -23,9 +23,9 @@ class LiveApiBanner extends StatelessWidget {
             Expanded(
               child: Text(
                 compact
-                    ? 'Live API — match & liveness on Solveig (Render), not on this device.'
+                    ? 'Live in-house API — match & liveness on server, not on this device.'
                     : 'Live API verification — face match and liveness are processed on the '
-                        'Solveig Identity API (Render cloud). This device only captures camera '
+                        'in-house identity API. This device only captures camera '
                         'frames; no static on-device template matching.',
                 style: Theme.of(context).textTheme.bodySmall?.copyWith(
                       color: AppTheme.primaryDark,

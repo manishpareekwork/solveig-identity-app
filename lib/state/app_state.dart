@@ -1,10 +1,16 @@
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
+import 'package:uuid/uuid.dart';
 
 import '../config/defaults.dart';
 import '../config/secrets_loader.dart';
+import '../features/flow/flow_models.dart';
+import '../features/flow/verification_result_screen.dart';
+import '../models/registered_profile.dart';
+import '../services/api_error_detail.dart';
 import '../services/face_capture_quality.dart';
+import '../utils/confidence_format.dart';
 import '../utils/jwt_utils.dart';
 import '../services/auth_storage.dart';
 import '../services/identity_api_client.dart';
@@ -13,20 +19,27 @@ enum FlowStep {
   setup,
   createIdentity,
   enrollFace,
+  registerComplete,
   showQr,
   startVerification,
   captureVerify,
   result,
 }
 
+enum AppFlowMode { register, manual, liveIdentify }
+
 class AppState extends ChangeNotifier {
   AppState(this._storage);
 
   final AuthStorage _storage;
+  static const _uuid = Uuid();
 
   bool loading = false;
+  String? loadingMessage;
   String? error;
+  ApiErrorDetail? errorDetail;
   bool configured = false;
+  bool registerFlowPending = false;
 
   String baseUrl = kDefaultApiBaseUrl;
   String tenantSlug = kDefaultTenantSlug;
@@ -42,9 +55,14 @@ class AppState extends ChangeNotifier {
   String? qrToken;
   String? sessionId;
   Map<String, dynamic>? lastSession;
+  VerificationResultArgs? pendingResultArgs;
+  List<RegisteredProfile> registeredProfiles = [];
   FlowStep step = FlowStep.setup;
-  bool manualMode = false;
+  AppFlowMode flowMode = AppFlowMode.register;
   bool navigateToResult = false;
+
+  bool get hasRegisteredProfiles => registeredProfiles.isNotEmpty;
+  int get registeredProfileCount => registeredProfiles.length;
 
   bool get _hasValidClientCreds => AppSecrets(
         clientId: clientId,
@@ -100,6 +118,7 @@ class AppState extends ChangeNotifier {
     }
 
     configured = accessToken.isNotEmpty && _hasValidClientCreds && tenantId.isNotEmpty;
+    await loadRegisteredProfiles();
     if (!configured) {
       await autoConnect(silent: true);
     } else {
@@ -114,11 +133,12 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Auto-register or refresh token — skips manual API Setup when secrets are available.
   Future<bool> autoConnect({bool silent = false}) async {
     if (!silent) {
       loading = true;
+      loadingMessage = 'Connecting to in-house API…';
       error = null;
+      errorDetail = null;
       notifyListeners();
     }
     try {
@@ -139,7 +159,7 @@ class AppState extends ChangeNotifier {
           tenantSlug: tenantSlug,
           accessToken: '',
           adminToken: adminToken,
-        ).registerClient(displayName: 'Solveig Mobile Demo');
+        ).registerClient(displayName: 'Mobile Demo');
         _applyRegisteredClient(client);
 
         final token = await IdentityApiClient(
@@ -171,16 +191,17 @@ class AppState extends ChangeNotifier {
       step = FlowStep.createIdentity;
       return true;
     } on ApiException catch (e) {
-      error = e.message;
+      _setError(e, context: 'autoConnect');
       step = FlowStep.setup;
       return false;
     } catch (e) {
-      error = e.toString();
+      _setUnknownError(e, context: 'autoConnect');
       step = FlowStep.setup;
       return false;
     } finally {
       if (!silent) {
         loading = false;
+        loadingMessage = null;
         notifyListeners();
       }
     }
@@ -212,7 +233,7 @@ class AppState extends ChangeNotifier {
           tenantSlug: this.tenantSlug,
           accessToken: '',
           adminToken: this.adminToken,
-        ).registerClient(displayName: 'Solveig Mobile Demo');
+        ).registerClient(displayName: 'Mobile Demo');
         _applyRegisteredClient(client);
       }
 
@@ -239,32 +260,72 @@ class AppState extends ChangeNotifier {
       );
       configured = true;
       step = FlowStep.createIdentity;
-    });
+    }, loadingMessage: 'Connecting to in-house API…');
   }
 
-  Future<void> startQuickFlow() async {
-    manualMode = false;
+  Future<void> loadRegisteredProfiles() async {
+    registeredProfiles = await _storage.loadRegisteredProfiles();
+    notifyListeners();
+  }
+
+  Future<void> beginRegisterFlow() async {
+    flowMode = AppFlowMode.register;
     await resetFlow();
+    registerFlowPending = true;
+    notifyListeners();
+  }
+
+  Future<void> continueRegisterFlowIfPending() async {
+    if (!registerFlowPending || flowMode != AppFlowMode.register) return;
+    registerFlowPending = false;
     if (!configured) {
-      final ok = await autoConnect();
-      if (!ok) return;
+      loadingMessage = 'Connecting to in-house API…';
+      loading = true;
+      notifyListeners();
+      try {
+        final ok = await autoConnect(silent: true);
+        if (!ok) return;
+      } finally {
+        loading = false;
+        loadingMessage = null;
+        notifyListeners();
+      }
     }
     await createIdentity();
   }
 
+  Future<void> beginAnotherRegistration() async {
+    flowMode = AppFlowMode.register;
+    identityId = null;
+    enrollmentId = null;
+    qrToken = null;
+    sessionId = null;
+    lastSession = null;
+    error = null;
+    errorDetail = null;
+    step = FlowStep.createIdentity;
+    registerFlowPending = true;
+    notifyListeners();
+    await continueRegisterFlowIfPending();
+  }
+
+  String get activeLoadingMessage =>
+      loadingMessage ??
+      switch (step) {
+        FlowStep.createIdentity => 'Creating identity…',
+        FlowStep.enrollFace => 'Processing face enrollment…',
+        FlowStep.registerComplete => 'Registration complete',
+        FlowStep.showQr => 'Issuing QR reference…',
+        FlowStep.startVerification => 'Starting verification session…',
+        FlowStep.captureVerify => 'Running face match & liveness…',
+        _ => 'Working with in-house API…',
+      };
+
   void setManualMode(bool value) {
-    manualMode = value;
+    flowMode = value ? AppFlowMode.manual : AppFlowMode.register;
     notifyListeners();
   }
 
-  Future<void> afterEnrollInQuickFlow() async {
-    if (manualMode || error != null) return;
-    await issueQr();
-    if (error != null) return;
-    await startVerification();
-  }
-
-  /// Refresh client access token using stored client credentials.
   Future<void> refreshAccessToken() async {
     if (!_hasValidClientCreds) {
       throw ApiException('Client credentials required to refresh token');
@@ -292,7 +353,6 @@ class AppState extends ChangeNotifier {
     configured = true;
   }
 
-  /// Issue a new token when missing or near expiry; re-register client if creds are stale.
   Future<void> ensureFreshToken() async {
     if (!_hasValidClientCreds) {
       final ok = await autoConnect(silent: true);
@@ -320,7 +380,7 @@ class AppState extends ChangeNotifier {
       identityId = body['id'] as String;
       await api.createConsent(identityId!);
       step = FlowStep.enrollFace;
-    });
+    }, loadingMessage: 'Creating identity…');
   }
 
   Future<void> enrollWithImageBytes(List<int> image) async {
@@ -329,18 +389,200 @@ class AppState extends ChangeNotifier {
       final b64 = base64Encode(normalized);
       final body = await api.enrollFace(identityId: identityId!, imageBase64: b64);
       enrollmentId = body['id'] as String;
-      step = FlowStep.showQr;
-    });
-    if (!manualMode && error == null) {
-      await afterEnrollInQuickFlow();
+      if (flowMode == AppFlowMode.manual) {
+        step = FlowStep.showQr;
+      } else {
+        step = FlowStep.registerComplete;
+      }
+    }, loadingMessage: 'Enrolling face template…');
+    if (error == null) {
+      await _addRegisteredProfile();
     }
+  }
+
+  Future<void> _addRegisteredProfile() async {
+    if (identityId == null || enrollmentId == null) return;
+    final label = 'Profile ${registeredProfiles.length + 1}';
+    final profile = RegisteredProfile(
+      localId: _uuid.v4(),
+      label: label,
+      identityId: identityId!,
+      enrollmentId: enrollmentId!,
+      enrolledAt: DateTime.now(),
+    );
+    registeredProfiles = [...registeredProfiles, profile];
+    await _storage.saveRegisteredProfiles(registeredProfiles);
+    notifyListeners();
+  }
+
+  /// Live capture compared against every registered profile (1:1 API loop).
+  Future<void> verifyLiveAgainstProfiles(List<int> image) async {
+    final total = registeredProfiles.length;
+    if (total == 0) {
+      error = 'No registered profiles — register at least one face first.';
+      errorDetail = ApiErrorDetail(summary: error!, fullLog: error!);
+      notifyListeners();
+      return;
+    }
+
+    loading = true;
+    error = null;
+    errorDetail = null;
+    loadingMessage = 'Preparing live match against $total profile${total == 1 ? '' : 's'}…';
+    notifyListeners();
+
+    try {
+      await ensureFreshToken();
+      final normalized = await normalizeCaptureBytes(Uint8List.fromList(image));
+      final b64 = base64Encode(normalized);
+      loadingMessage = total == 1
+          ? 'Matching live capture against ${registeredProfiles.first.label}…'
+          : 'Matching live capture against $total profiles…';
+      notifyListeners();
+
+      final attempts = await Future.wait([
+        for (var i = 0; i < total; i++)
+          _probeProfile(
+            profile: registeredProfiles[i],
+            profileIndex: i + 1,
+            imageBase64: b64,
+          ),
+      ]);
+
+      ProfileMatchAttempt? best;
+      for (final attempt in attempts) {
+        if (attempt.passed && (best == null || (attempt.confidence ?? 0) > (best.confidence ?? 0))) {
+          best = attempt;
+        }
+      }
+
+      if (best == null) {
+        pendingResultArgs = VerificationResultArgs(
+          passed: false,
+          sessionStatus: 'no_match',
+          checks: const [],
+          identificationMode: true,
+          totalProfilesCompared: total,
+          profileAttempts: attempts,
+          message: 'No match found among $total registered profile${total == 1 ? '' : 's'}.',
+        );
+        navigateToResult = true;
+        notifyListeners();
+        return;
+      }
+
+      loadingMessage = 'Match in ${best.profileLabel} — liveness check…';
+      notifyListeners();
+
+      identityId = best.identityId;
+      enrollmentId = best.enrollmentId;
+      sessionId = best.sessionId;
+      if (sessionId == null) {
+        final session = await api.createVerificationSession(best.identityId);
+        sessionId = session['id'] as String;
+        await _runVerificationPipeline(b64);
+      } else {
+        await _finishMatchedSession(b64);
+      }
+
+      final sessionArgs = lastSession != null ? resultArgsFromSession(lastSession!) : null;
+      pendingResultArgs = VerificationResultArgs(
+        passed: sessionArgs?.passed ?? false,
+        sessionStatus: sessionArgs?.sessionStatus ?? 'unknown',
+        checks: sessionArgs?.checks ?? const [],
+        identityId: best.identityId,
+        sessionId: sessionId,
+        faceMatchConfidence: best.confidence ?? sessionArgs?.faceMatchConfidence,
+        livenessConfidence: sessionArgs?.livenessConfidence,
+        faceCaptureId: sessionArgs?.faceCaptureId,
+        matchedEnrollmentId: best.enrollmentId,
+        verifiedAt: sessionArgs?.verifiedAt,
+        identificationMode: true,
+        totalProfilesCompared: total,
+        matchedProfileIndex: best.profileIndex,
+        matchedProfileLabel: best.profileLabel,
+        profileAttempts: attempts,
+        message:
+            'Match found in ${best.profileLabel} (profile ${best.profileIndex} of $total). ${total - 1} other profile${total - 1 == 1 ? '' : 's'} did not match.',
+      );
+      navigateToResult = true;
+    } on ApiException catch (e) {
+      _setError(e, context: 'liveIdentify');
+    } catch (e) {
+      _setUnknownError(e, context: 'liveIdentify');
+    } finally {
+      loading = false;
+      loadingMessage = null;
+      notifyListeners();
+    }
+  }
+
+  Future<ProfileMatchAttempt> _probeProfile({
+    required RegisteredProfile profile,
+    required int profileIndex,
+    required String imageBase64,
+  }) async {
+    try {
+      final session = await api.createVerificationSession(
+        profile.identityId,
+        requiredChecks: const ['face_verification', 'liveness'],
+      );
+      final probeSessionId = session['id'] as String;
+      final result = await api.submitFaceCheck(sessionId: probeSessionId, imageBase64: imageBase64);
+      final checks = (result['checks'] as List<dynamic>? ?? []).cast<Map<String, dynamic>>();
+      final faceCheck = findCheck(checks, 'face_verification') ?? {};
+      final status = faceCheck['status'] as String? ?? 'failed';
+      return ProfileMatchAttempt(
+        profileIndex: profileIndex,
+        profileLabel: profile.label,
+        identityId: profile.identityId,
+        enrollmentId: profile.enrollmentId,
+        passed: status == 'passed',
+        confidence: checkConfidence(faceCheck),
+        resultCode: faceCheck['result_code'] as String?,
+        sessionId: status == 'passed' ? probeSessionId : null,
+      );
+    } on ApiException catch (e) {
+      return ProfileMatchAttempt(
+        profileIndex: profileIndex,
+        profileLabel: profile.label,
+        identityId: profile.identityId,
+        enrollmentId: profile.enrollmentId,
+        passed: false,
+        resultCode: e.code ?? 'error',
+      );
+    }
+  }
+
+  /// Complete a probe session that already passed face match — liveness + finalize only.
+  Future<void> _finishMatchedSession(String b64) async {
+    var session = await _submitCheckSafely(
+      () => api.submitLivenessCheck(sessionId: sessionId!, imageBase64: b64),
+    );
+    lastSession = session;
+
+    if (_allChecksPassed(session)) {
+      session = await _completeSafely();
+    } else {
+      try {
+        session = await api.getSession(sessionId!);
+      } catch (_) {
+        session = lastSession!;
+      }
+    }
+
+    lastSession = session;
+    step = FlowStep.result;
+    pendingResultArgs = resultArgsFromSession(session);
+    navigateToResult = true;
+    notifyListeners();
   }
 
   Future<void> verifyWithImageBytes(List<int> image) async {
     final normalized = await normalizeCaptureBytes(Uint8List.fromList(image));
     await _run(() async {
       await _runVerificationPipeline(base64Encode(normalized));
-    });
+    }, loadingMessage: 'Running face match & liveness…');
   }
 
   Future<void> issueQr() async {
@@ -348,7 +590,7 @@ class AppState extends ChangeNotifier {
       final body = await api.issueQrReference(identityId!);
       qrToken = body['token'] as String;
       step = FlowStep.startVerification;
-    });
+    }, loadingMessage: 'Issuing QR reference…');
   }
 
   Future<void> startVerification() async {
@@ -357,7 +599,7 @@ class AppState extends ChangeNotifier {
       sessionId = body['id'] as String;
       lastSession = body;
       step = FlowStep.captureVerify;
-    });
+    }, loadingMessage: 'Starting verification session…');
   }
 
   Future<void> _runVerificationPipeline(String b64) async {
@@ -376,7 +618,6 @@ class AppState extends ChangeNotifier {
     if (_allChecksPassed(session)) {
       session = await _completeSafely();
     } else {
-      // Failed checks cannot complete on API — still show outcome to user.
       try {
         session = await api.getSession(sessionId!);
       } catch (_) {
@@ -386,6 +627,7 @@ class AppState extends ChangeNotifier {
 
     lastSession = session;
     step = FlowStep.result;
+    pendingResultArgs = resultArgsFromSession(session);
     navigateToResult = true;
     notifyListeners();
   }
@@ -423,21 +665,59 @@ class AppState extends ChangeNotifier {
     navigateToResult = false;
   }
 
+  void clearPendingResult() {
+    pendingResultArgs = null;
+  }
+
+  VerificationResultArgs? buildResultArgs() {
+    if (pendingResultArgs != null) return pendingResultArgs;
+    if (lastSession != null) return resultArgsFromSession(lastSession!);
+    return null;
+  }
+
+  void _setError(ApiException e, {String? context}) {
+    final detail = ApiErrorDetail.fromException(e);
+    errorDetail = context != null
+        ? ApiErrorDetail(
+            summary: detail.summary,
+            fullLog: 'Context: $context\n${detail.fullLog}',
+            correlationId: detail.correlationId,
+            endpoint: detail.endpoint,
+            statusCode: detail.statusCode,
+            code: detail.code,
+          )
+        : detail;
+    error = errorDetail!.summary;
+  }
+
+  void _setUnknownError(Object e, {String? context}) {
+    errorDetail = ApiErrorDetail.fromUnknown(e, context: context);
+    error = errorDetail!.summary;
+  }
+
   Future<void> resetFlow() async {
     identityId = null;
     enrollmentId = null;
     qrToken = null;
     sessionId = null;
     lastSession = null;
+    pendingResultArgs = null;
     navigateToResult = false;
     error = null;
+    errorDetail = null;
     step = FlowStep.createIdentity;
     notifyListeners();
   }
 
-  Future<void> _run(Future<void> Function() action, {bool retried = false}) async {
+  Future<void> _run(
+    Future<void> Function() action, {
+    bool retried = false,
+    String? loadingMessage,
+  }) async {
     loading = true;
+    this.loadingMessage = loadingMessage;
     error = null;
+    errorDetail = null;
     notifyListeners();
     try {
       await action();
@@ -447,18 +727,18 @@ class AppState extends ChangeNotifier {
           (e.message.contains('invalid or expired token') || e.code == 'UNAUTHENTICATED')) {
         try {
           await ensureFreshToken();
-          return _run(action, retried: true);
+          return _run(action, retried: true, loadingMessage: loadingMessage);
         } catch (_) {
-          error = e.message;
+          _setError(e);
         }
       } else {
-        error = e.message;
+        _setError(e);
       }
     } catch (e) {
-      final text = e.toString();
-      error = text.startsWith('FormatException') ? 'Unexpected API response — server may be down or need redeploy.' : text;
+      _setUnknownError(e);
     } finally {
       loading = false;
+      this.loadingMessage = null;
       notifyListeners();
     }
   }

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../core/theme/app_theme.dart';
+import '../../utils/view_insets.dart';
 import '../../widgets/app_button.dart';
 import '../../widgets/live_api_banner.dart';
 import '../../utils/confidence_format.dart';
@@ -21,7 +22,7 @@ class VerificationResultScreen extends StatelessWidget {
     return Scaffold(
       appBar: AppBar(title: const Text('Verification result')),
       body: ListView(
-        padding: const EdgeInsets.all(20),
+        padding: screenPadding(context),
         children: [
           const LiveApiBanner(compact: true),
           const SizedBox(height: 16),
@@ -47,6 +48,10 @@ class VerificationResultScreen extends StatelessWidget {
               ),
             ],
           ),
+          if (args.identificationMode && args.totalProfilesCompared != null) ...[
+            const SizedBox(height: 16),
+            _IdentificationSummary(args: args),
+          ],
           if (args.message != null) ...[
             const SizedBox(height: 12),
             Text(args.message!, style: Theme.of(context).textTheme.bodyLarge),
@@ -62,10 +67,12 @@ class VerificationResultScreen extends StatelessWidget {
             const SizedBox(height: 16),
             _ConfirmationCard(args: args),
           ],
-          const SizedBox(height: 20),
-          Text('Check outcomes', style: Theme.of(context).textTheme.titleLarge),
-          const SizedBox(height: 8),
-          ...args.checks.map((c) => _CheckCard(check: c)),
+          if (args.checks.isNotEmpty) ...[
+            const SizedBox(height: 20),
+            Text('Check outcomes', style: Theme.of(context).textTheme.titleLarge),
+            const SizedBox(height: 8),
+            ...args.checks.map((c) => _CheckCard(check: c)),
+          ],
           if (args.identityId != null) ...[
             const SizedBox(height: 16),
             Text('Reference IDs', style: Theme.of(context).textTheme.titleMedium),
@@ -102,6 +109,77 @@ class VerificationResultScreen extends StatelessWidget {
             onPressed: () => context.go('/flow'),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _IdentificationSummary extends StatelessWidget {
+  const _IdentificationSummary({required this.args});
+
+  final VerificationResultArgs args;
+
+  @override
+  Widget build(BuildContext context) {
+    final total = args.totalProfilesCompared ?? args.profileAttempts.length;
+    final matched = args.passed && args.matchedProfileIndex != null;
+    final headerColor = matched ? AppTheme.success : AppTheme.error;
+
+    return Card(
+      color: headerColor.withValues(alpha: 0.08),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(matched ? Icons.check_circle : Icons.search_off, color: headerColor),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    matched
+                        ? 'Match in ${args.matchedProfileLabel} (${args.matchedProfileIndex} of $total)'
+                        : 'No match among $total profile${total == 1 ? '' : 's'}',
+                    style: Theme.of(context).textTheme.titleMedium?.copyWith(color: headerColor),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Text('Compared live capture against:', style: Theme.of(context).textTheme.labelLarge),
+            const SizedBox(height: 8),
+            ...args.profileAttempts.map((a) {
+              final isWinner = matched && a.profileIndex == args.matchedProfileIndex;
+              final rowColor = a.passed
+                  ? (isWinner ? AppTheme.success : AppTheme.warning)
+                  : AppTheme.error;
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: Row(
+                  children: [
+                    Icon(
+                      a.passed ? (isWinner ? Icons.star : Icons.check) : Icons.close,
+                      size: 18,
+                      color: rowColor,
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        '${a.profileLabel} · profile ${a.profileIndex} of $total',
+                        style: TextStyle(fontWeight: isWinner ? FontWeight.w700 : FontWeight.normal),
+                      ),
+                    ),
+                    Text(
+                      a.passed ? formatConfidencePercent(a.confidence) : (a.resultCode ?? 'no match'),
+                      style: TextStyle(color: rowColor, fontWeight: FontWeight.w600),
+                    ),
+                  ],
+                ),
+              );
+            }),
+          ],
+        ),
       ),
     );
   }

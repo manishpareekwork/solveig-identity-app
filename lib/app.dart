@@ -16,7 +16,6 @@ GoRouter createRouter(AppState appState) {
       final loc = state.matchedLocation;
       if (appState.loading && loc != '/setup') return null;
       if (!appState.configured && loc != '/setup') return '/setup';
-      if (appState.configured && loc == '/setup') return '/';
       return null;
     },
     routes: [
@@ -29,7 +28,7 @@ GoRouter createRouter(AppState appState) {
           final map = extra is Map ? extra.cast<String, String>() : const <String, String>{};
           return FaceCaptureScreen(
             title: map['title'] ?? 'Capture face',
-            subtitle: map['subtitle'] ?? 'Live camera preview — sent to Solveig API on capture.',
+            subtitle: map['subtitle'] ?? 'Live camera preview — sent to in-house API on capture.',
           );
         },
       ),
