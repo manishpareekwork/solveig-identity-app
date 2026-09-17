@@ -9,6 +9,7 @@ import '../features/flow/flow_models.dart';
 import '../features/flow/verification_result_screen.dart';
 import '../models/registered_profile.dart';
 import '../services/api_error_detail.dart';
+import '../services/face_capture_payload.dart';
 import '../services/face_capture_quality.dart';
 import '../utils/confidence_format.dart';
 import '../utils/jwt_utils.dart';
@@ -429,7 +430,7 @@ class AppState extends ChangeNotifier {
   }
 
   /// Live capture compared against every registered profile (1:1 API loop).
-  Future<void> verifyLiveAgainstProfiles(List<int> image) async {
+  Future<void> verifyLiveAgainstProfiles(FaceCapturePayload capture) async {
     final total = registeredProfiles.length;
     if (total == 0) {
       error = 'No registered profiles — register at least one face first.';
@@ -446,26 +447,47 @@ class AppState extends ChangeNotifier {
 
     try {
       await ensureFreshToken();
-      final normalized = await normalizeCaptureBytes(Uint8List.fromList(image));
+      final normalized = await normalizeCaptureBytes(capture.primary);
       final b64 = base64Encode(normalized);
-      loadingMessage = total == 1
-          ? 'Matching live capture against ${registeredProfiles.first.label}…'
-          : 'Matching live capture against $total profiles…';
+      loadingMessage = 'Matching live capture against $total profile${total == 1 ? '' : 's'}…';
       notifyListeners();
 
-      final attempts = await Future.wait([
-        for (var i = 0; i < total; i++)
-          _probeProfile(
-            profile: registeredProfiles[i],
+      final identify = await api.identifyFace(
+        imageBase64: b64,
+        identityIds: registeredProfiles.map((p) => p.identityId).toList(),
+      );
+      final candidates = (identify['candidates'] as List<dynamic>? ?? []).cast<Map<String, dynamic>>();
+      final attempts = <ProfileMatchAttempt>[];
+      for (var i = 0; i < registeredProfiles.length; i++) {
+        final profile = registeredProfiles[i];
+        Map<String, dynamic>? row;
+        for (final candidate in candidates) {
+          if (candidate['identity_id'] == profile.identityId) {
+            row = candidate;
+            break;
+          }
+        }
+        final confidence = (row?['confidence'] as num?)?.toDouble();
+        final matched = row?['matched'] == true;
+        attempts.add(
+          ProfileMatchAttempt(
             profileIndex: i + 1,
-            imageBase64: b64,
+            profileLabel: profile.label,
+            identityId: profile.identityId,
+            enrollmentId: profile.enrollmentId,
+            passed: matched,
+            confidence: confidence,
+            resultCode: matched ? 'verification_passed' : 'verification_failed',
           ),
-      ]);
+        );
+      }
 
       ProfileMatchAttempt? best;
-      for (final attempt in attempts) {
-        if (attempt.passed && (best == null || (attempt.confidence ?? 0) > (best.confidence ?? 0))) {
-          best = attempt;
+      if (identify['matched'] == true && identify['identity_id'] != null) {
+        final matchedId = identify['identity_id'] as String;
+        final idx = registeredProfiles.indexWhere((p) => p.identityId == matchedId);
+        if (idx >= 0) {
+          best = attempts[idx];
         }
       }
 
@@ -489,14 +511,12 @@ class AppState extends ChangeNotifier {
 
       identityId = best.identityId;
       enrollmentId = best.enrollmentId;
-      sessionId = best.sessionId;
-      if (sessionId == null) {
-        final session = await api.createVerificationSession(best.identityId);
-        sessionId = session['id'] as String;
-        await _runVerificationPipeline(b64);
-      } else {
-        await _finishMatchedSession(b64);
-      }
+      final session = await api.createVerificationSession(best.identityId);
+      sessionId = session['id'] as String;
+      await _runVerificationPipeline(
+        b64,
+        livenessFramesBase64: capture.livenessFramesBase64,
+      );
 
       final sessionArgs = lastSession != null ? resultArgsFromSession(lastSession!) : null;
       pendingResultArgs = VerificationResultArgs(
@@ -530,71 +550,13 @@ class AppState extends ChangeNotifier {
     }
   }
 
-  Future<ProfileMatchAttempt> _probeProfile({
-    required RegisteredProfile profile,
-    required int profileIndex,
-    required String imageBase64,
-  }) async {
-    try {
-      final session = await api.createVerificationSession(
-        profile.identityId,
-        requiredChecks: const ['face_verification', 'liveness'],
-      );
-      final probeSessionId = session['id'] as String;
-      final result = await api.submitFaceCheck(sessionId: probeSessionId, imageBase64: imageBase64);
-      final checks = (result['checks'] as List<dynamic>? ?? []).cast<Map<String, dynamic>>();
-      final faceCheck = findCheck(checks, 'face_verification') ?? {};
-      final status = faceCheck['status'] as String? ?? 'failed';
-      return ProfileMatchAttempt(
-        profileIndex: profileIndex,
-        profileLabel: profile.label,
-        identityId: profile.identityId,
-        enrollmentId: profile.enrollmentId,
-        passed: status == 'passed',
-        confidence: checkConfidence(faceCheck),
-        resultCode: faceCheck['result_code'] as String?,
-        sessionId: status == 'passed' ? probeSessionId : null,
-      );
-    } on ApiException catch (e) {
-      return ProfileMatchAttempt(
-        profileIndex: profileIndex,
-        profileLabel: profile.label,
-        identityId: profile.identityId,
-        enrollmentId: profile.enrollmentId,
-        passed: false,
-        resultCode: e.code ?? 'error',
-      );
-    }
-  }
-
-  /// Complete a probe session that already passed face match — liveness + finalize only.
-  Future<void> _finishMatchedSession(String b64) async {
-    var session = await _submitCheckSafely(
-      () => api.submitLivenessCheck(sessionId: sessionId!, imageBase64: b64),
-    );
-    lastSession = session;
-
-    if (_allChecksPassed(session)) {
-      session = await _completeSafely();
-    } else {
-      try {
-        session = await api.getSession(sessionId!);
-      } catch (_) {
-        session = lastSession!;
-      }
-    }
-
-    lastSession = session;
-    step = FlowStep.result;
-    pendingResultArgs = resultArgsFromSession(session);
-    navigateToResult = true;
-    notifyListeners();
-  }
-
-  Future<void> verifyWithImageBytes(List<int> image) async {
-    final normalized = await normalizeCaptureBytes(Uint8List.fromList(image));
+  Future<void> verifyWithCapture(FaceCapturePayload capture) async {
+    final normalized = await normalizeCaptureBytes(capture.primary);
     await _run(() async {
-      await _runVerificationPipeline(base64Encode(normalized));
+      await _runVerificationPipeline(
+        base64Encode(normalized),
+        livenessFramesBase64: capture.livenessFramesBase64,
+      );
     }, loadingMessage: 'Running face match & liveness…');
   }
 
@@ -615,7 +577,10 @@ class AppState extends ChangeNotifier {
     }, loadingMessage: 'Starting verification session…');
   }
 
-  Future<void> _runVerificationPipeline(String b64) async {
+  Future<void> _runVerificationPipeline(
+    String b64, {
+    List<String> livenessFramesBase64 = const [],
+  }) async {
     Map<String, dynamic> session;
 
     session = await _submitCheckSafely(
@@ -624,7 +589,12 @@ class AppState extends ChangeNotifier {
     lastSession = session;
 
     session = await _submitCheckSafely(
-      () => api.submitLivenessCheck(sessionId: sessionId!, imageBase64: b64),
+      () => api.submitLivenessCheck(
+        sessionId: sessionId!,
+        imageBase64: b64,
+        livenessFramesBase64:
+            livenessFramesBase64.isEmpty ? null : livenessFramesBase64,
+      ),
     );
     lastSession = session;
 

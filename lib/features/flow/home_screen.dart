@@ -1,10 +1,9 @@
-import 'dart:typed_data';
-
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
 import '../../core/theme/app_theme.dart';
+import '../../services/face_capture_payload.dart';
 import '../../state/app_state.dart';
 import '../../services/api_error_detail.dart';
 import '../../widgets/api_error_panel.dart';
@@ -15,16 +14,17 @@ class HomeScreen extends StatelessWidget {
   const HomeScreen({super.key});
 
   Future<void> _openLiveVerify(BuildContext context, AppState state) async {
-    final bytes = await context.push<Uint8List>(
+    final payload = await context.push<FaceCapturePayload>(
       '/capture',
       extra: {
         'title': 'Live verify',
         'subtitle':
-            'Capture your face now. The app will compare against ${state.registeredProfileCount} registered profile${state.registeredProfileCount == 1 ? '' : 's'} on this device.',
+            'Blink once during capture. Compared against ${state.registeredProfileCount} registered profile${state.registeredProfileCount == 1 ? '' : 's'}.',
+        'requireBlink': 'true',
       },
     );
-    if (bytes == null || !context.mounted) return;
-    await state.verifyLiveAgainstProfiles(bytes);
+    if (payload == null || !context.mounted) return;
+    await state.verifyLiveAgainstProfiles(payload);
     if (!context.mounted) return;
     final args = state.buildResultArgs();
     if (state.navigateToResult && args != null) {

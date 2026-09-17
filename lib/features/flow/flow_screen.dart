@@ -1,11 +1,10 @@
-import 'dart:typed_data';
-
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 
 import '../../core/theme/app_theme.dart';
+import '../../services/face_capture_payload.dart';
 import '../../services/api_error_detail.dart';
 import '../../state/app_state.dart';
 import '../../utils/view_insets.dart';
@@ -162,15 +161,17 @@ class _ActiveStepPanel extends StatelessWidget {
 
   Future<void> _openLiveVerify(BuildContext context) async {
     final count = state.registeredProfileCount;
-    final bytes = await context.push<Uint8List>(
+    final payload = await context.push<FaceCapturePayload>(
       '/capture',
       extra: {
         'title': 'Live verify',
-        'subtitle': 'Capture now — compared against $count registered profile${count == 1 ? '' : 's'}.',
+        'subtitle':
+            'Blink once during capture — compared against $count registered profile${count == 1 ? '' : 's'}.',
+        'requireBlink': 'true',
       },
     );
-    if (bytes == null || !context.mounted) return;
-    await state.verifyLiveAgainstProfiles(bytes);
+    if (payload == null || !context.mounted) return;
+    await state.verifyLiveAgainstProfiles(payload);
     if (!context.mounted) return;
     final args = state.buildResultArgs();
     if (state.navigateToResult && args != null) {
@@ -252,7 +253,7 @@ class _ActiveStepPanel extends StatelessWidget {
               title: 'Enroll face',
               subtitle:
                   'Align your face in the oval. This creates a new registered profile on the in-house API.',
-              onCaptured: state.enrollWithImageBytes,
+              onCaptured: (payload) => state.enrollWithImageBytes(payload.primary),
             ),
           ),
         ],
@@ -295,8 +296,10 @@ class _ActiveStepPanel extends StatelessWidget {
                 ? () => _openLiveCapture(
                       context,
                       title: 'Verify face',
-                      subtitle: 'Live capture for 1:1 match against this identity\'s enrollment.',
-                      onCaptured: state.verifyWithImageBytes,
+                      subtitle:
+                          'Blink once during capture for 1:1 match against this identity\'s enrollment.',
+                      requireBlink: true,
+                      onCaptured: state.verifyWithCapture,
                     )
                 : () => _openLiveVerify(context),
           ),
@@ -327,14 +330,19 @@ class _ActiveStepPanel extends StatelessWidget {
     BuildContext context, {
     required String title,
     required String subtitle,
-    required Future<void> Function(List<int> bytes) onCaptured,
+    required Future<void> Function(FaceCapturePayload payload) onCaptured,
+    bool requireBlink = false,
   }) async {
-    final bytes = await context.push<Uint8List>(
+    final payload = await context.push<FaceCapturePayload>(
       '/capture',
-      extra: {'title': title, 'subtitle': subtitle},
+      extra: {
+        'title': title,
+        'subtitle': subtitle,
+        if (requireBlink) 'requireBlink': 'true',
+      },
     );
-    if (bytes == null || !context.mounted) return;
-    await onCaptured(bytes);
+    if (payload == null || !context.mounted) return;
+    await onCaptured(payload);
     if (!context.mounted) return;
     final state = context.read<AppState>();
     final args = state.buildResultArgs();

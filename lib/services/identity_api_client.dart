@@ -228,6 +228,18 @@ class IdentityApiClient {
         body: {'identity_id': identityId, 'image_base64': imageBase64},
       );
 
+  Future<Map<String, dynamic>> identifyFace({
+    required String imageBase64,
+    List<String>? identityIds,
+  }) =>
+      _post(
+        '/v1/face/identify',
+        body: {
+          'image_base64': imageBase64,
+          if (identityIds != null && identityIds.isNotEmpty) 'identity_ids': identityIds,
+        },
+      );
+
   Future<Map<String, dynamic>> revokeEnrollment(String enrollmentId) async {
     final corr = _uuid.v4();
     final res = await http.delete(
@@ -266,11 +278,14 @@ class IdentityApiClient {
   Future<Map<String, dynamic>> submitLivenessCheck({
     required String sessionId,
     required String imageBase64,
-  }) =>
-      _post(
-        '/v1/verification-sessions/$sessionId/checks/liveness',
-        body: {'image_base64': imageBase64},
-      );
+    List<String>? livenessFramesBase64,
+  }) {
+    final body = <String, dynamic>{'image_base64': imageBase64};
+    if (livenessFramesBase64 != null && livenessFramesBase64.isNotEmpty) {
+      body['liveness_frames_base64'] = livenessFramesBase64;
+    }
+    return _post('/v1/verification-sessions/$sessionId/checks/liveness', body: body);
+  }
 
   Future<Map<String, dynamic>> completeSession(String sessionId) => _post(
         '/v1/verification-sessions/$sessionId/complete',

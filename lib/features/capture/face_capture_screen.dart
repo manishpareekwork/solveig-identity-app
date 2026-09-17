@@ -6,6 +6,7 @@ import 'package:go_router/go_router.dart';
 import 'package:permission_handler/permission_handler.dart';
 
 import '../../core/theme/app_theme.dart';
+import '../../services/face_capture_payload.dart';
 import '../../services/face_capture_quality.dart';
 import '../../services/face_focus.dart';
 import '../../widgets/app_button.dart';
@@ -17,10 +18,12 @@ class FaceCaptureScreen extends StatefulWidget {
     super.key,
     required this.title,
     required this.subtitle,
+    this.requireBlink = false,
   });
 
   final String title;
   final String subtitle;
+  final bool requireBlink;
 
   @override
   State<FaceCaptureScreen> createState() => _FaceCaptureScreenState();
@@ -95,6 +98,27 @@ class _FaceCaptureScreenState extends State<FaceCaptureScreen> {
       _qualityHint = null;
     });
     try {
+      if (widget.requireBlink) {
+        if (mounted) {
+          setState(() => _qualityHint = 'Blink naturally once while we capture a short burst…');
+        }
+        final payload = await captureBlinkSequence(controller: controller, quality: _quality);
+        if (payload == null) {
+          if (mounted) {
+            setState(
+              () => _qualityHint = 'No blink detected — open your eyes, then blink once during capture.',
+            );
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('Blink once during the burst capture and try again.')),
+            );
+          }
+          return;
+        }
+        if (!mounted) return;
+        context.pop(payload);
+        return;
+      }
+
       final file = await controller.takePicture();
       var bytes = Uint8List.fromList(await file.readAsBytes());
       bytes = await normalizeCaptureBytes(bytes);
@@ -110,7 +134,7 @@ class _FaceCaptureScreenState extends State<FaceCaptureScreen> {
       }
 
       if (!mounted) return;
-      context.pop(result.preparedBytes);
+      context.pop(FaceCapturePayload.fromPrimary(result.preparedBytes!));
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Capture failed: $e')));
@@ -169,7 +193,9 @@ class _FaceCaptureScreenState extends State<FaceCaptureScreen> {
             Padding(
               padding: EdgeInsets.fromLTRB(20, 12, 20, 12 + bottomInset),
               child: AppButton(
-                label: _capturing ? 'Checking…' : 'Capture & send to API',
+                label: _capturing
+                    ? (widget.requireBlink ? 'Capturing blink…' : 'Checking…')
+                    : (widget.requireBlink ? 'Capture with blink' : 'Capture & send to API'),
                 icon: Icons.camera,
                 onPressed: _capturing || _controller == null ? null : _capture,
               ),

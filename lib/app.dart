@@ -29,6 +29,7 @@ GoRouter createRouter(AppState appState) {
           return FaceCaptureScreen(
             title: map['title'] ?? 'Capture face',
             subtitle: map['subtitle'] ?? 'Live camera preview — sent to in-house API on capture.',
+            requireBlink: map['requireBlink'] == 'true',
           );
         },
       ),
