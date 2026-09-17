@@ -268,6 +268,19 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
+  Future<void> deleteRegisteredProfile(RegisteredProfile profile) async {
+    await _run(() async {
+      await ensureFreshToken();
+      await api.revokeEnrollment(profile.enrollmentId);
+      registeredProfiles = registeredProfiles.where((p) => p.localId != profile.localId).toList();
+      await _storage.saveRegisteredProfiles(registeredProfiles);
+      if (identityId == profile.identityId) {
+        identityId = null;
+        enrollmentId = null;
+      }
+    }, loadingMessage: 'Removing profile…');
+  }
+
   Future<void> beginRegisterFlow() async {
     flowMode = AppFlowMode.register;
     await resetFlow();

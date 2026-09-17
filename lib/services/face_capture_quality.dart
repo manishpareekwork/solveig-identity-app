@@ -214,14 +214,15 @@ class FaceCaptureQualityService {
   }
 }
 
-/// Normalize JPEG size before API upload for stabler stub matching.
-Future<Uint8List> normalizeCaptureBytes(Uint8List bytes, {int maxWidth = 720}) async {
+/// Resize and re-encode captures before API upload (smaller payloads, faster verify).
+Future<Uint8List> normalizeCaptureBytes(Uint8List bytes, {int maxWidth = 640, int quality = 82}) async {
   try {
     final decoded = img.decodeImage(bytes);
     if (decoded == null) return bytes;
-    if (decoded.width <= maxWidth) return bytes;
-    final resized = img.copyResize(decoded, width: maxWidth);
-    return Uint8List.fromList(img.encodeJpg(resized, quality: 88));
+    final resized = decoded.width > maxWidth
+        ? img.copyResize(decoded, width: maxWidth)
+        : decoded;
+    return Uint8List.fromList(img.encodeJpg(resized, quality: quality));
   } catch (_) {
     return bytes;
   }

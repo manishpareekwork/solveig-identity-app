@@ -85,7 +85,35 @@ class HomeScreen extends StatelessWidget {
                   style: Theme.of(context).textTheme.titleSmall),
               const SizedBox(height: 8),
               ...state.registeredProfiles.map(
-                (p) => _ProfileChip(label: p.label, identityId: p.identityId),
+                (p) => _ProfileChip(
+                  label: p.label,
+                  identityId: p.identityId,
+                  onDelete: state.loading
+                      ? null
+                      : () async {
+                          final confirmed = await showDialog<bool>(
+                            context: context,
+                            builder: (ctx) => AlertDialog(
+                              title: const Text('Delete profile?'),
+                              content: Text(
+                                'Remove ${p.label} from this device and revoke its face enrollment on the server.',
+                              ),
+                              actions: [
+                                TextButton(
+                                  onPressed: () => Navigator.pop(ctx, false),
+                                  child: const Text('Cancel'),
+                                ),
+                                FilledButton(
+                                  onPressed: () => Navigator.pop(ctx, true),
+                                  child: const Text('Delete'),
+                                ),
+                              ],
+                            ),
+                          );
+                          if (confirmed != true || !context.mounted) return;
+                          await state.deleteRegisteredProfile(p);
+                        },
+                ),
               ),
             ],
             const SizedBox(height: 16),
@@ -122,10 +150,15 @@ class HomeScreen extends StatelessWidget {
 }
 
 class _ProfileChip extends StatelessWidget {
-  const _ProfileChip({required this.label, required this.identityId});
+  const _ProfileChip({
+    required this.label,
+    required this.identityId,
+    this.onDelete,
+  });
 
   final String label;
   final String identityId;
+  final VoidCallback? onDelete;
 
   @override
   Widget build(BuildContext context) {
@@ -139,6 +172,13 @@ class _ProfileChip extends StatelessWidget {
           leading: const Icon(Icons.face, color: AppTheme.primary),
           title: Text(label),
           subtitle: Text(identityId, maxLines: 1, overflow: TextOverflow.ellipsis),
+          trailing: onDelete == null
+              ? null
+              : IconButton(
+                  icon: const Icon(Icons.delete_outline, color: AppTheme.error),
+                  tooltip: 'Delete profile',
+                  onPressed: onDelete,
+                ),
         ),
       ),
     );

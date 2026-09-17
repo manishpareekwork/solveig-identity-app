@@ -228,6 +228,15 @@ class IdentityApiClient {
         body: {'identity_id': identityId, 'image_base64': imageBase64},
       );
 
+  Future<Map<String, dynamic>> revokeEnrollment(String enrollmentId) async {
+    final corr = _uuid.v4();
+    final res = await http.delete(
+      _uri('/v1/face/enrollments/$enrollmentId'),
+      headers: _headers(correlationId: corr),
+    );
+    return _decode(res, method: 'DELETE', path: '/v1/face/enrollments/$enrollmentId', correlationId: corr);
+  }
+
   Future<Map<String, dynamic>> issueQrReference(String identityId) => _post(
         '/v1/qr/references',
         body: {'identity_id': identityId},
