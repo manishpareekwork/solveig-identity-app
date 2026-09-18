@@ -10,6 +10,7 @@ import 'package:google_mlkit_face_detection/google_mlkit_face_detection.dart';
 import 'package:image/image.dart' as img;
 import 'package:path_provider/path_provider.dart';
 
+import 'blink_capture_status.dart';
 import 'face_capture_payload.dart';
 import 'face_focus.dart';
 
@@ -44,7 +45,11 @@ class FaceCaptureQualityService {
 
   Future<void> dispose() => _detector.close();
 
-  Future<FaceCaptureResult> prepareCapture(Uint8List bytes, {bool allowClosedEyes = false}) async {
+  Future<FaceCaptureResult> prepareCapture(
+    Uint8List bytes, {
+    bool allowClosedEyes = false,
+    bool uploadFullFrame = true,
+  }) async {
     final dir = await getTemporaryDirectory();
     final file = File('${dir.path}/solveig_capture_${DateTime.now().millisecondsSinceEpoch}.jpg');
     await file.writeAsBytes(bytes, flush: true);
@@ -60,6 +65,9 @@ class FaceCaptureQualityService {
         return FaceCaptureResult(issue: issue);
       }
 
+      if (uploadFullFrame) {
+        return FaceCaptureResult(preparedBytes: bytes);
+      }
       final primary = FaceFocusGuide.selectPrimaryFace(faces, imageSize) ?? faces.first;
       final prepared = _cropToFace(bytes, primary.boundingBox);
       return FaceCaptureResult(preparedBytes: prepared);
@@ -248,11 +256,26 @@ class FaceCaptureQualityService {
 Future<FaceCapturePayload?> captureBlinkSequence({
   required CameraController controller,
   required FaceCaptureQualityService quality,
-  int frameCount = 6,
-  Duration interval = const Duration(milliseconds: 220),
+  int frameCount = 3,
+  Duration interval = const Duration(milliseconds: 150),
+  BlinkCaptureProgressCallback? onProgress,
 }) async {
+  void report(BlinkCapturePhase phase, String message, {int framesDone = 0}) {
+    onProgress?.call(
+      BlinkCaptureStatus(
+        phase: phase,
+        message: message,
+        framesDone: framesDone,
+        framesTotal: frameCount,
+      ),
+    );
+  }
+
+  report(BlinkCapturePhase.starting, 'Hold still — capturing…');
+
   final preparedFrames = <Uint8List>[];
   final eyeScores = <double>[];
+  var blinkReported = false;
 
   for (var i = 0; i < frameCount; i++) {
     if (i > 0) await Future<void>.delayed(interval);
@@ -266,20 +289,57 @@ Future<FaceCapturePayload?> captureBlinkSequence({
     preparedFrames.add(result.preparedBytes!);
     final score = await quality.eyeOpenScore(result.preparedBytes!);
     if (score != null) eyeScores.add(score);
+
+    report(
+      BlinkCapturePhase.frameCaptured,
+      i == 0 ? 'Face seen — blink once now' : 'Blink detected?',
+      framesDone: preparedFrames.length,
+    );
+
+    if (!blinkReported && eyeScores.length >= 2) {
+      final minOpen = eyeScores.reduce(math.min);
+      final maxOpen = eyeScores.reduce(math.max);
+      if (minOpen < 0.4 && maxOpen > 0.5) {
+        blinkReported = true;
+        report(
+          BlinkCapturePhase.blinkDetected,
+          'Blink detected — hold still',
+          framesDone: preparedFrames.length,
+        );
+      }
+    }
   }
 
-  if (preparedFrames.length < 4) return null;
+  if (preparedFrames.length < 2) {
+    report(BlinkCapturePhase.failedQuality, 'Could not see your face clearly — try again');
+    return null;
+  }
 
-  var blinkSeen = false;
-  if (eyeScores.length >= 3) {
+  report(BlinkCapturePhase.checkingBlink, 'Checking blink…', framesDone: preparedFrames.length);
+
+  var blinkSeen = blinkReported;
+  if (eyeScores.length >= 2) {
     final minOpen = eyeScores.reduce(math.min);
     final maxOpen = eyeScores.reduce(math.max);
     final minIdx = eyeScores.indexOf(minOpen);
     final maxIdx = eyeScores.length - 1 - eyeScores.reversed.toList().indexOf(maxOpen);
-    blinkSeen = minOpen < 0.35 && maxOpen > 0.55 && minIdx < maxIdx;
+    blinkSeen = blinkSeen || (minOpen < 0.35 && maxOpen > 0.55 && minIdx < maxIdx);
   }
 
-  if (!blinkSeen) return null;
+  if (!blinkSeen) {
+    report(BlinkCapturePhase.failedNoBlink, 'No blink detected — try again');
+    return null;
+  }
+
+  if (!blinkReported) {
+    report(
+      BlinkCapturePhase.blinkDetected,
+      'Blink detected',
+      framesDone: preparedFrames.length,
+    );
+  }
+
+  report(BlinkCapturePhase.selectingBestFrame, 'Face captured — finishing…', framesDone: preparedFrames.length);
 
   var bestIdx = 0;
   var bestScore = -1.0;
@@ -291,14 +351,16 @@ Future<FaceCapturePayload?> captureBlinkSequence({
     }
   }
 
+  report(BlinkCapturePhase.done, 'Done — sending to API', framesDone: preparedFrames.length);
+
   return FaceCapturePayload.fromParts(
     primary: preparedFrames[bestIdx],
-    frames: preparedFrames,
+    frames: const [],
   );
 }
 
 /// Resize and re-encode captures before API upload (smaller payloads, faster verify).
-Future<Uint8List> normalizeCaptureBytes(Uint8List bytes, {int maxWidth = 640, int quality = 82}) async {
+Future<Uint8List> normalizeCaptureBytes(Uint8List bytes, {int maxWidth = 720, int quality = 88}) async {
   try {
     final decoded = img.decodeImage(bytes);
     if (decoded == null) return bytes;

@@ -44,12 +44,14 @@ class HomeScreen extends StatelessWidget {
           IconButton(icon: const Icon(Icons.settings), onPressed: () => context.go('/setup')),
         ],
       ),
-      body: Padding(
-        padding: screenPadding(context),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            const LiveApiBanner(),
+      body: SafeArea(
+        top: false,
+        child: SingleChildScrollView(
+          padding: screenPadding(context),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              const LiveApiBanner(),
             const SizedBox(height: 20),
             Text(
               'Register multiple faces, then verify live against all profiles on this device.',
@@ -136,13 +138,15 @@ class HomeScreen extends StatelessWidget {
                 detail: ApiErrorDetail(summary: state.error!, fullLog: state.error!),
               ),
             ],
-            const Spacer(),
-            Text(
-              'Development API · ${state.baseUrl.replaceAll('https://', '')}',
-              style: Theme.of(context).textTheme.bodySmall,
-              textAlign: TextAlign.center,
-            ),
-          ],
+              const SizedBox(height: 24),
+              Text(
+                'Development API · ${state.baseUrl.replaceAll('https://', '')}',
+                style: Theme.of(context).textTheme.bodySmall,
+                textAlign: TextAlign.center,
+              ),
+              SizedBox(height: MediaQuery.paddingOf(context).bottom + 8),
+            ],
+          ),
         ),
       ),
     );

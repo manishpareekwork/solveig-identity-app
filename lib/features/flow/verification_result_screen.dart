@@ -122,7 +122,7 @@ class _IdentificationSummary extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final total = args.totalProfilesCompared ?? args.profileAttempts.length;
-    final matched = args.passed && args.matchedProfileIndex != null;
+    final matched = args.matchedProfileIndex != null;
     final headerColor = matched ? AppTheme.success : AppTheme.error;
 
     return Card(

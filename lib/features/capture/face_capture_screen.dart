@@ -6,12 +6,14 @@ import 'package:go_router/go_router.dart';
 import 'package:permission_handler/permission_handler.dart';
 
 import '../../core/theme/app_theme.dart';
+import '../../services/blink_capture_status.dart';
 import '../../services/face_capture_payload.dart';
 import '../../services/face_capture_quality.dart';
 import '../../services/face_focus.dart';
 import '../../widgets/app_button.dart';
 import '../../widgets/identity_loading.dart';
 import '../../widgets/live_api_banner.dart';
+import 'blink_capture_coach.dart';
 
 class FaceCaptureScreen extends StatefulWidget {
   const FaceCaptureScreen({
@@ -36,6 +38,7 @@ class _FaceCaptureScreenState extends State<FaceCaptureScreen> {
   String? _error;
   String? _qualityHint;
   bool _capturing = false;
+  BlinkCaptureStatus? _blinkStatus;
 
   @override
   void initState() {
@@ -96,24 +99,31 @@ class _FaceCaptureScreenState extends State<FaceCaptureScreen> {
     setState(() {
       _capturing = true;
       _qualityHint = null;
+      _blinkStatus = null;
     });
     try {
       if (widget.requireBlink) {
-        if (mounted) {
-          setState(() => _qualityHint = 'Blink naturally once while we capture a short burst…');
-        }
-        final payload = await captureBlinkSequence(controller: controller, quality: _quality);
+        final payload = await captureBlinkSequence(
+          controller: controller,
+          quality: _quality,
+          onProgress: (status) {
+            if (mounted) setState(() => _blinkStatus = status);
+          },
+        );
         if (payload == null) {
           if (mounted) {
             setState(
-              () => _qualityHint = 'No blink detected — open your eyes, then blink once during capture.',
+              () => _qualityHint = _blinkStatus?.message ??
+                  'No blink detected — open your eyes, then blink once during capture.',
             );
             ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text('Blink once during the burst capture and try again.')),
+              const SnackBar(content: Text('Blink once during capture and try again.')),
             );
           }
           return;
         }
+        if (!mounted) return;
+        await Future<void>.delayed(const Duration(milliseconds: 400));
         if (!mounted) return;
         context.pop(payload);
         return;
@@ -140,7 +150,14 @@ class _FaceCaptureScreenState extends State<FaceCaptureScreen> {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Capture failed: $e')));
       }
     } finally {
-      if (mounted) setState(() => _capturing = false);
+      if (mounted) {
+        setState(() {
+          _capturing = false;
+          if (_blinkStatus?.phase != BlinkCapturePhase.done) {
+            _blinkStatus = null;
+          }
+        });
+      }
     }
   }
 
@@ -163,9 +180,10 @@ class _FaceCaptureScreenState extends State<FaceCaptureScreen> {
               padding: const EdgeInsets.all(16),
               child: Text(widget.subtitle, style: Theme.of(context).textTheme.bodyMedium),
             ),
+            if (widget.requireBlink && !_capturing) const BlinkCoachInstructions(),
             if (_qualityHint != null)
               Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16),
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                 child: Material(
                   color: AppTheme.error.withValues(alpha: 0.1),
                   borderRadius: BorderRadius.circular(10),
@@ -175,31 +193,61 @@ class _FaceCaptureScreenState extends State<FaceCaptureScreen> {
                   ),
                 ),
               ),
-            const Padding(
-              padding: EdgeInsets.fromLTRB(16, 8, 16, 0),
-              child: Text(
-                'Tips: face in oval · background people OK · open eyes · no mask · even lighting',
-                style: TextStyle(fontSize: 12),
+            if (!widget.requireBlink)
+              const Padding(
+                padding: EdgeInsets.fromLTRB(16, 8, 16, 0),
+                child: Text(
+                  'Tips: face in oval · background people OK · open eyes · no mask · even lighting',
+                  style: TextStyle(fontSize: 12),
+                ),
               ),
-            ),
             Expanded(
-              child: _capturing
-                  ? const Padding(
-                      padding: EdgeInsets.symmetric(horizontal: 20),
-                      child: IdentityLoadingPanel(message: 'Checking face quality…', height: 280),
-                    )
-                  : _buildPreview(),
+              child: _capturing && widget.requireBlink
+                  ? _buildBlinkCaptureView()
+                  : _capturing
+                      ? const Padding(
+                          padding: EdgeInsets.symmetric(horizontal: 20),
+                          child: IdentityLoadingPanel(message: 'Checking face quality…', height: 280),
+                        )
+                      : _buildPreview(),
             ),
             Padding(
               padding: EdgeInsets.fromLTRB(20, 12, 20, 12 + bottomInset),
               child: AppButton(
                 label: _capturing
-                    ? (widget.requireBlink ? 'Capturing blink…' : 'Checking…')
-                    : (widget.requireBlink ? 'Capture with blink' : 'Capture & send to API'),
-                icon: Icons.camera,
+                    ? (widget.requireBlink ? 'Capturing…' : 'Checking…')
+                    : (widget.requireBlink ? 'Start — blink when prompted' : 'Capture & send to API'),
+                icon: widget.requireBlink ? Icons.visibility : Icons.camera,
                 onPressed: _capturing || _controller == null ? null : _capture,
               ),
             ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildBlinkCaptureView() {
+    final controller = _controller;
+    if (controller == null || !controller.value.isInitialized) {
+      return const IdentityLoadingPanel(message: 'Camera…', height: 280);
+    }
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 20),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(20),
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            CameraPreview(controller),
+            CustomPaint(painter: _FaceOvalPainter()),
+            if (_blinkStatus != null)
+              Positioned(
+                left: 12,
+                right: 12,
+                bottom: 12,
+                child: BlinkCaptureProgressPanel(status: _blinkStatus!),
+              ),
           ],
         ),
       ),
@@ -231,7 +279,9 @@ class _FaceCaptureScreenState extends State<FaceCaptureScreen> {
               right: 0,
               bottom: 16,
               child: Text(
-                'Align face in oval — quality checked locally, match on API',
+                widget.requireBlink
+                    ? 'Follow the blink guide above, then tap Start'
+                    : 'Align face in oval — quality checked locally, match on API',
                 textAlign: TextAlign.center,
                 style: Theme.of(context).textTheme.bodySmall?.copyWith(
                       color: Colors.white,

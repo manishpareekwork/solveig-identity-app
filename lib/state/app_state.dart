@@ -11,7 +11,7 @@ import '../models/registered_profile.dart';
 import '../services/api_error_detail.dart';
 import '../services/face_capture_payload.dart';
 import '../services/face_capture_quality.dart';
-import '../utils/confidence_format.dart';
+import '../utils/confidence_format.dart' show formatConfidencePercent;
 import '../utils/jwt_utils.dart';
 import '../services/auth_storage.dart';
 import '../services/identity_api_client.dart';
@@ -449,7 +449,50 @@ class AppState extends ChangeNotifier {
       await ensureFreshToken();
       final normalized = await normalizeCaptureBytes(capture.primary);
       final b64 = base64Encode(normalized);
-      loadingMessage = 'Matching live capture against $total profile${total == 1 ? '' : 's'}…';
+
+      if (total == 1) {
+        final profile = registeredProfiles.first;
+        loadingMessage = 'Verifying ${profile.label}…';
+        notifyListeners();
+        identityId = profile.identityId;
+        enrollmentId = profile.enrollmentId;
+        sessionId = (await api.createVerificationSession(profile.identityId))['id'] as String;
+        await _runVerificationPipeline(b64);
+        final sessionArgs = lastSession != null ? resultArgsFromSession(lastSession!) : null;
+        final sessionPassed = sessionArgs?.passed ?? false;
+        pendingResultArgs = VerificationResultArgs(
+          passed: sessionPassed,
+          sessionStatus: sessionArgs?.sessionStatus ?? 'unknown',
+          checks: sessionArgs?.checks ?? const [],
+          identityId: profile.identityId,
+          sessionId: sessionId,
+          faceMatchConfidence: sessionArgs?.faceMatchConfidence,
+          livenessConfidence: sessionArgs?.livenessConfidence,
+          faceCaptureId: sessionArgs?.faceCaptureId,
+          matchedEnrollmentId: profile.enrollmentId,
+          verifiedAt: sessionArgs?.verifiedAt,
+          identificationMode: true,
+          totalProfilesCompared: 1,
+          matchedProfileIndex: 1,
+          matchedProfileLabel: profile.label,
+          profileAttempts: [
+            ProfileMatchAttempt(
+              profileIndex: 1,
+              profileLabel: profile.label,
+              identityId: profile.identityId,
+              enrollmentId: profile.enrollmentId,
+              passed: sessionPassed,
+              confidence: sessionArgs?.faceMatchConfidence,
+              resultCode: sessionPassed ? 'verification_passed' : 'verification_failed',
+            ),
+          ],
+          message: sessionPassed ? 'Verified: ${profile.label}.' : sessionArgs?.message,
+        );
+        navigateToResult = true;
+        return;
+      }
+
+      loadingMessage = 'Matching live capture against $total profiles…';
       notifyListeners();
 
       final identify = await api.identifyFace(
@@ -511,16 +554,17 @@ class AppState extends ChangeNotifier {
 
       identityId = best.identityId;
       enrollmentId = best.enrollmentId;
-      final session = await api.createVerificationSession(best.identityId);
-      sessionId = session['id'] as String;
-      await _runVerificationPipeline(
-        b64,
-        livenessFramesBase64: capture.livenessFramesBase64,
+      final session = await api.createVerificationSession(
+        best.identityId,
+        requiredChecks: const ['liveness'],
       );
+      sessionId = session['id'] as String;
+      await _runVerificationPipeline(b64, skipFaceCheck: true);
 
       final sessionArgs = lastSession != null ? resultArgsFromSession(lastSession!) : null;
+      final sessionPassed = sessionArgs?.passed ?? false;
       pendingResultArgs = VerificationResultArgs(
-        passed: sessionArgs?.passed ?? false,
+        passed: sessionPassed,
         sessionStatus: sessionArgs?.sessionStatus ?? 'unknown',
         checks: sessionArgs?.checks ?? const [],
         identityId: best.identityId,
@@ -535,8 +579,10 @@ class AppState extends ChangeNotifier {
         matchedProfileIndex: best.profileIndex,
         matchedProfileLabel: best.profileLabel,
         profileAttempts: attempts,
-        message:
-            'Match found in ${best.profileLabel} (profile ${best.profileIndex} of $total). ${total - 1} other profile${total - 1 == 1 ? '' : 's'} did not match.',
+        message: sessionPassed
+            ? 'Verified: ${best.profileLabel} (${best.profileIndex} of $total).'
+            : 'Face matched ${best.profileLabel} at ${formatConfidencePercent(best.confidence ?? 0)} — '
+                '${sessionArgs?.message ?? 'liveness or session check failed'}.',
       );
       navigateToResult = true;
     } on ApiException catch (e) {
@@ -553,10 +599,7 @@ class AppState extends ChangeNotifier {
   Future<void> verifyWithCapture(FaceCapturePayload capture) async {
     final normalized = await normalizeCaptureBytes(capture.primary);
     await _run(() async {
-      await _runVerificationPipeline(
-        base64Encode(normalized),
-        livenessFramesBase64: capture.livenessFramesBase64,
-      );
+      await _runVerificationPipeline(base64Encode(normalized));
     }, loadingMessage: 'Running face match & liveness…');
   }
 
@@ -579,22 +622,19 @@ class AppState extends ChangeNotifier {
 
   Future<void> _runVerificationPipeline(
     String b64, {
-    List<String> livenessFramesBase64 = const [],
+    bool skipFaceCheck = false,
   }) async {
     Map<String, dynamic> session;
 
-    session = await _submitCheckSafely(
-      () => api.submitFaceCheck(sessionId: sessionId!, imageBase64: b64),
-    );
-    lastSession = session;
+    if (!skipFaceCheck) {
+      session = await _submitCheckSafely(
+        () => api.submitFaceCheck(sessionId: sessionId!, imageBase64: b64),
+      );
+      lastSession = session;
+    }
 
     session = await _submitCheckSafely(
-      () => api.submitLivenessCheck(
-        sessionId: sessionId!,
-        imageBase64: b64,
-        livenessFramesBase64:
-            livenessFramesBase64.isEmpty ? null : livenessFramesBase64,
-      ),
+      () => api.submitLivenessCheck(sessionId: sessionId!, imageBase64: b64),
     );
     lastSession = session;
 

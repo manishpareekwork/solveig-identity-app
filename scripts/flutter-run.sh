@@ -18,6 +18,7 @@ fi
 
 source "$(dirname "$0")/use-java23.sh"
 cd "$CACHE"
+find . -name '._*' -type f -delete 2>/dev/null || true
 flutter pub get
 # APFS cache copy may not have secrets.json — pass from source tree.
 if [[ -f "$ROOT/secrets.json" ]]; then
