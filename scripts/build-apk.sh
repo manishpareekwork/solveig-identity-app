@@ -2,5 +2,7 @@
 # Release APK — delegates to build-android.sh (APFS cache on exFAT volumes).
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+echo "Solveig Identity — release APK build" >&2
+echo "Project: $ROOT" >&2
 export SOLVEIG_FLUTTER_CLEAN=1
 exec "$ROOT/scripts/build-android.sh" release

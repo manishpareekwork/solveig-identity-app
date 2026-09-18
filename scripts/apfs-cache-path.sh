@@ -12,8 +12,10 @@ if [[ ! "$ROOT" == /Volumes/* ]]; then
 fi
 
 mkdir -p "$CACHE"
-echo "Syncing project to APFS cache: $CACHE" >&2
-rsync -a --delete \
+echo ">>> [1/4] Syncing project to APFS cache (1–3 min on exFAT, please wait)…" >&2
+echo "    $ROOT" >&2
+echo " -> $CACHE" >&2
+rsync -a --delete --info=progress2 \
   --exclude '._*' \
   --exclude '.DS_Store' \
   --exclude build \
@@ -22,5 +24,6 @@ rsync -a --delete \
   --exclude ios/Pods \
   --exclude .gradle-home \
   "$ROOT/" "$CACHE/"
+echo ">>> Sync complete." >&2
 
 echo "$CACHE"
