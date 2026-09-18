@@ -22,6 +22,10 @@ else
 fi
 
 flutter pub get
+# Avoid stale AppleDouble artifacts if a prior build ran on /Volumes/ (exFAT).
+find . -name '._*' -type f -delete 2>/dev/null || true
+flutter clean
+flutter pub get
 flutter build apk --release "${DART_DEFINES[@]}"
 
 OUT="$ROOT/build/app/outputs/flutter-apk"

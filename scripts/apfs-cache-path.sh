@@ -14,6 +14,8 @@ fi
 mkdir -p "$CACHE"
 echo "Syncing project to APFS cache: $CACHE" >&2
 rsync -a --delete \
+  --exclude '._*' \
+  --exclude '.DS_Store' \
   --exclude build \
   --exclude .dart_tool \
   --exclude android/.gradle \
