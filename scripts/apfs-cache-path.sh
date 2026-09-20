@@ -15,7 +15,12 @@ mkdir -p "$CACHE"
 echo ">>> [1/4] Syncing project to APFS cache (1–3 min on exFAT, please wait)…" >&2
 echo "    $ROOT" >&2
 echo " -> $CACHE" >&2
-rsync -a --delete --info=progress2 \
+RSYNC_PROGRESS=(--progress)
+if rsync --help 2>&1 | grep -q 'info=progress2'; then
+  RSYNC_PROGRESS=(--info=progress2)
+fi
+# Progress must not go to stdout — build-android.sh captures only the cache path below.
+rsync -a --delete "${RSYNC_PROGRESS[@]}" \
   --exclude '._*' \
   --exclude '.DS_Store' \
   --exclude build \
@@ -23,7 +28,7 @@ rsync -a --delete --info=progress2 \
   --exclude android/.gradle \
   --exclude ios/Pods \
   --exclude .gradle-home \
-  "$ROOT/" "$CACHE/"
+  "$ROOT/" "$CACHE/" >&2
 echo ">>> Sync complete." >&2
 
 echo "$CACHE"

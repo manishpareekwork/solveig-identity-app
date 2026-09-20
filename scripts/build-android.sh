@@ -4,8 +4,13 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-CACHE="$("$(dirname "$0")/apfs-cache-path.sh")"
+CACHE="$("$(dirname "$0")/apfs-cache-path.sh" | tail -1)"
 MODE="${1:-release}"
+
+if [[ ! -d "$CACHE" ]]; then
+  echo "Invalid build cache path: $CACHE" >&2
+  exit 1
+fi
 
 if [[ "$MODE" != "debug" && "$MODE" != "release" ]]; then
   echo "Usage: $0 [debug|release]" >&2
