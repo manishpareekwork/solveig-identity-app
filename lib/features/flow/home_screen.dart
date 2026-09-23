@@ -54,7 +54,8 @@ class HomeScreen extends StatelessWidget {
               const LiveApiBanner(),
             const SizedBox(height: 20),
             Text(
-              'Register multiple faces, then verify live against all profiles on this device.',
+              'Register faces (server-side templates), verify live with blink-assisted liveness, '
+              'and issue signed QR references — opaque tokens with no personal data inside.',
               style: Theme.of(context).textTheme.bodyLarge,
             ),
             const SizedBox(height: 28),

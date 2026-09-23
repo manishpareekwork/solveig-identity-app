@@ -7,10 +7,12 @@ Flutter reference client for [solveig-api-platform](https://github.com/manishpar
 1. **API Setup** — connect with admin token (auto-registers mobile client) or existing client credentials
 2. **Create identity** — `POST /v1/identities`
 3. **Enroll face** — camera capture → `POST /v1/face/enrollments`
-4. **Show QR** — `POST /v1/qr/references` (opaque token, no PII)
-5. **Start verification** — `POST /v1/verification-sessions`
-6. **Capture & verify** — face 1:1 + liveness checks on same capture
+4. **Start verification** — `POST /v1/verification-sessions`
+5. **Capture & verify** — face 1:1 + liveness checks on same capture
+6. **Show QR** — `POST /v1/qr/references` (signed opaque token, no PII; bind `session_id` after verified session)
 7. **Result** — session status and per-check outcomes
+
+Security wording: **similarity-based face match** and **signed QR reference** — not “encrypted identity inside QR.” Policy: `GET /v1/platform/transparency`.
 
 Default development API: `https://solveig-identity-api-dev.onrender.com`
 

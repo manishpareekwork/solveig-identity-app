@@ -249,10 +249,20 @@ class IdentityApiClient {
     return _decode(res, method: 'DELETE', path: '/v1/face/enrollments/$enrollmentId', correlationId: corr);
   }
 
-  Future<Map<String, dynamic>> issueQrReference(String identityId) => _post(
+  Future<Map<String, dynamic>> issueQrReference(
+    String identityId, {
+    String? sessionId,
+  }) =>
+      _post(
         '/v1/qr/references',
-        body: {'identity_id': identityId},
+        body: {
+          'identity_id': identityId,
+          if (sessionId != null && sessionId.isNotEmpty) 'session_id': sessionId,
+        },
       );
+
+  Future<Map<String, dynamic>> fetchPlatformTransparency() =>
+      _get('/v1/platform/transparency');
 
   Future<Map<String, dynamic>> createVerificationSession(
     String identityId, {

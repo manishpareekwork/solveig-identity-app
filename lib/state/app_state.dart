@@ -404,7 +404,7 @@ class AppState extends ChangeNotifier {
       final body = await api.enrollFace(identityId: identityId!, imageBase64: b64);
       enrollmentId = body['id'] as String;
       if (flowMode == AppFlowMode.manual) {
-        step = FlowStep.showQr;
+        step = FlowStep.startVerification;
       } else {
         step = FlowStep.registerComplete;
       }
@@ -605,9 +605,18 @@ class AppState extends ChangeNotifier {
 
   Future<void> issueQr() async {
     await _run(() async {
-      final body = await api.issueQrReference(identityId!);
+      String? bindSession;
+      if (lastSession != null) {
+        final status = lastSession!['status'] as String?;
+        if (status == 'verified' && sessionId != null) {
+          bindSession = sessionId;
+        }
+      }
+      final body = await api.issueQrReference(identityId!, sessionId: bindSession);
       qrToken = body['token'] as String;
-      step = FlowStep.startVerification;
+      if (step != FlowStep.showQr) {
+        step = FlowStep.startVerification;
+      }
     }, loadingMessage: 'Issuing QR reference…');
   }
 
@@ -649,9 +658,14 @@ class AppState extends ChangeNotifier {
     }
 
     lastSession = session;
-    step = FlowStep.result;
+    final passed = _allChecksPassed(session) || (session['status'] as String?) == 'verified';
+    if (flowMode == AppFlowMode.manual && passed) {
+      step = FlowStep.showQr;
+    } else {
+      step = FlowStep.result;
+    }
     pendingResultArgs = resultArgsFromSession(session);
-    navigateToResult = true;
+    navigateToResult = flowMode != AppFlowMode.manual || !passed;
     notifyListeners();
   }
 

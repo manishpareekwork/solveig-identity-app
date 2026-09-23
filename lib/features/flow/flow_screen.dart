@@ -223,7 +223,9 @@ class _ActiveStepPanel extends StatelessWidget {
       FlowStep.enrollFace => 'Live camera — one frame sent to the in-house API to create a template.',
       FlowStep.registerComplete =>
         '${state.registeredProfiles.lastOrNull?.label ?? 'Profile'} saved. ${state.registeredProfileCount} profile${state.registeredProfileCount == 1 ? '' : 's'} on this device. Use Verify live from home to match against all.',
-      FlowStep.showQr => manual ? 'Issue an opaque QR reference (no PII).' : 'QR reference step.',
+      FlowStep.showQr => manual
+          ? 'Issue a signed opaque QR (no PII). When bound to a verified session, resolve proves completed face + liveness checks.'
+          : 'QR reference step.',
       FlowStep.startVerification => manual
           ? 'Open a verification session for 1:1 face + liveness checks.'
           : 'Session for manual verify.',
